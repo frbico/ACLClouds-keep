@@ -23,13 +23,17 @@
       <span>ACLClouds-Keep</span>
     </div>
     <h2>欢迎回来</h2>
-    <p>输入安装时生成的管理密码。</p>
+    <p>使用管理员账号和密码登录控制台。</p>
 
     <form method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="field">
-        <label>管理密码</label>
-        <input type="password" name="password" autocomplete="current-password" placeholder="••••••••••••" required autofocus>
+        <label>管理员账号</label>
+        <input type="text" name="username" autocomplete="username" placeholder="admin" required autofocus>
+      </div>
+      <div class="field login-password-field">
+        <label>管理员密码</label>
+        <input type="password" name="password" autocomplete="current-password" placeholder="••••••••••••" required>
       </div>
       <button class="button button-primary button-large button-full" type="submit">进入控制台</button>
     </form>
