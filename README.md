@@ -1,4 +1,4 @@
-# ACLClouds Keep
+# ACLClouds-Keep
 
 [![CI](https://github.com/frbico/ACLClouds-keep/actions/workflows/ci.yml/badge.svg)](https://github.com/frbico/ACLClouds-keep/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/frbico/ACLClouds-keep)](LICENSE)
@@ -54,9 +54,8 @@ curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.
 安装完成后终端会显示类似：
 
 ```text
-ACLClouds Keep installed
+ACLClouds-Keep installed
 
-Instance:      ACLClouds-Keep-server
 Install dir:   /opt/ACLClouds-keep
 Local URL:     http://127.0.0.1:8787
 
@@ -69,17 +68,13 @@ Web admin password:
 
 请保存自动生成的 Web 管理密码。
 
-## 自定义实例名
+## 自定义端口
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash -s -- --instance Account-A
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash -s -- --port 8788
 ```
 
-自定义端口：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash -s -- --instance Account-A --port 8788
-```
+项目名称固定为 `ACLClouds-Keep`，不提供实例名称自定义，便于公开项目保持统一界面和文档。
 
 > 如果你不喜欢直接执行远程脚本，可以先下载并审查 `install.sh` 后再运行。
 
@@ -92,12 +87,12 @@ curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.
 ```text
 Debian Server A / Public IP A
 └── Docker
-    └── ACLClouds Keep
+    └── ACLClouds-Keep
         └── Account A
 
 Debian Server B / Public IP B
 └── Docker
-    └── ACLClouds Keep
+    └── ACLClouds-Keep
         └── Account B
 ```
 
@@ -208,7 +203,7 @@ Internet
    ↓
 http://127.0.0.1:8787
    ↓
-ACLClouds Keep
+ACLClouds-Keep
 ```
 
 在 1Panel 创建反向代理，例如：
@@ -305,7 +300,6 @@ curl http://127.0.0.1:8787/health
 |---|---:|---|
 | `APP_SECRET` | 无 | 必填，Cookie 加密与 Flask Session 密钥 |
 | `WEB_PASSWORD` | 无 | 必填，Web 后台密码 |
-| `INSTANCE_NAME` | ACLClouds Keep | 实例名称 |
 | `WEB_SECURE_COOKIE` | false | HTTPS 反代正常后设为 true |
 | `TARGET_REMAINING_HOURS` | 24 | 剩余多少小时进入续期阶段 |
 | `RETRY_HOURS` | 6 | 接近到期但未成功时的重试间隔 |
