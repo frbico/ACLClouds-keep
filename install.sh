@@ -39,6 +39,7 @@ Options:
 
 Environment overrides:
   APP_SECRET
+  WEB_USERNAME
   WEB_PASSWORD
   HOST_PORT
   BIND_ADDRESS
@@ -183,14 +184,16 @@ create_or_update_env() {
   if [[ ! -f "$env_file" ]]; then
     log "Creating .env with secure defaults..."
 
-    local secret password port bind
+    local secret username password port bind
     secret="${APP_SECRET:-$(openssl rand -hex 32)}"
+    username="${WEB_USERNAME:-admin}"
     password="${WEB_PASSWORD:-$(openssl rand -hex 12)}"
     port="${HOST_PORT_ARG:-8787}"
     bind="${BIND_ADDRESS_ARG:-127.0.0.1}"
 
     cat > "$env_file" <<EOF_ENV
 APP_SECRET=$secret
+WEB_USERNAME=$username
 WEB_PASSWORD=$password
 WEB_SECURE_COOKIE=false
 TARGET_REMAINING_HOURS=24
@@ -207,6 +210,7 @@ EOF_ENV
   else
     ok "Existing .env found; preserving secrets and settings."
 
+    ensure_env_key "$env_file" "WEB_USERNAME" "admin"
     ensure_env_key "$env_file" "WEB_SECURE_COOKIE" "false"
     ensure_env_key "$env_file" "TARGET_REMAINING_HOURS" "24"
     ensure_env_key "$env_file" "RETRY_HOURS" "6"
@@ -273,10 +277,11 @@ main() {
   chmod 700 "$PROJECT_DIR/data" 2>/dev/null || true
 
   local env_file="$PROJECT_DIR/.env"
-  local port bind password
+  local port bind username password
 
   port="$(read_env_value "$env_file" HOST_PORT)"
   bind="$(read_env_value "$env_file" BIND_ADDRESS)"
+  username="$(read_env_value "$env_file" WEB_USERNAME)"
   password="$(read_env_value "$env_file" WEB_PASSWORD)"
 
   log "Building and starting ACLClouds-Keep..."
@@ -295,23 +300,18 @@ main() {
   echo " Install dir:   $PROJECT_DIR"
   echo " Local URL:     http://127.0.0.1:$port"
   echo " Published on:  $bind:$port"
-  echo
-  echo " 1Panel / Nginx reverse proxy target:"
-  echo "   http://127.0.0.1:$port"
-  echo
 
   if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
+    echo " Web admin username:"
+    echo "   $username"
     echo " Web admin password:"
     echo "   $password"
     echo
-    echo " Save this password now. It is stored in $env_file"
+    echo " Save these credentials now. They are bootstrapped from $env_file"
   else
-    echo " Existing Web admin password was preserved."
+    echo " Existing Web admin credentials were preserved."
   fi
 
-  echo
-  echo " After HTTPS reverse proxy works, enable Secure cookies:"
-  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$env_file' && cd '$PROJECT_DIR' && docker compose up -d"
   echo
   echo " Update later:"
   echo "   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash"
