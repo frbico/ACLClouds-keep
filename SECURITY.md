@@ -1,6 +1,6 @@
 # Security Policy
 
-ACLClouds Keep is designed to keep account credentials local to the user's server.
+ACLClouds-Keep is designed to keep account credentials local to the user's server.
 
 ## Never commit secrets
 
@@ -29,16 +29,7 @@ Changing or losing `APP_SECRET` makes the previously encrypted Cookie unreadable
 
 ## Web UI exposure
 
-Docker binds the management UI to `127.0.0.1` by default.
-
-Recommended production setup:
-
-1. Keep `BIND_ADDRESS=127.0.0.1`
-2. Use 1Panel / Nginx / Caddy as a reverse proxy
-3. Enable HTTPS
-4. Set `WEB_SECURE_COOKIE=true`
-5. Use a strong `WEB_PASSWORD`
-6. Optionally restrict the management domain by firewall, VPN, or reverse-proxy access policy
+Docker binds the management UI to `127.0.0.1` by default. If you expose the Web UI remotely, use HTTPS, a strong administrator password, and network access controls appropriate for your server.
 
 ## Human verification
 
