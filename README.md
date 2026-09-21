@@ -52,7 +52,7 @@ Settings
 分别登录：
 
 ```text
-https://dash.aclclouds.com/
+https://aclclouds.com/dashboard
 ```
 
 在 Chrome / Edge 中：
@@ -60,7 +60,7 @@ https://dash.aclclouds.com/
 1. 按 `F12` 打开开发者工具。
 2. 进入 **Network / 网络**。
 3. 刷新页面。
-4. 点击一个发往 `dash.aclclouds.com` 的请求。
+4. 点击一个发往 `aclclouds.com` 的请求。
 5. 在 **Request Headers** 中找到 `Cookie:`。
 6. 复制 `Cookie:` 后面的完整内容。
 7. 第一个账号保存到 `ACL_COOKIES_1`，第二个账号保存到 `ACL_COOKIES_2`。
