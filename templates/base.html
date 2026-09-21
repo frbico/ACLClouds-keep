@@ -3,36 +3,55 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ instance_name }}</title>
+  <meta name="theme-color" content="#0b2a6f">
+  <title>ACLClouds-Keep</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <a class="brand" href="{{ url_for('index') }}">☁ {{ instance_name }}</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="{{ url_for('index') }}" aria-label="ACLClouds-Keep">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M9.2 23.4h14.3a6 6 0 0 0 .7-11.9A8.2 8.2 0 0 0 8.8 9.8a6.8 6.8 0 0 0 .4 13.6Z" fill="currentColor"/>
+            <path d="m12.2 17 2.4 2.4 5.2-5.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <span>ACLClouds-Keep</span>
+      </a>
+
       {% if session.get('authenticated') %}
-      <nav>
-        <a href="{{ url_for('index') }}">状态</a>
-        <a href="{{ url_for('settings') }}">设置</a>
-        <a href="{{ url_for('logs') }}">日志</a>
+      <nav class="main-nav" aria-label="主导航">
+        <a class="{% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">状态</a>
+        <a class="{% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">设置</a>
+        <a class="{% if request.endpoint == 'logs' %}active{% endif %}" href="{{ url_for('logs') }}">日志</a>
       </nav>
+
+      <form class="logout-form" method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="button button-outline button-small" type="submit">退出</button>
+      </form>
       {% endif %}
     </div>
-    {% if session.get('authenticated') %}
-    <form method="post" action="{{ url_for('logout') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="ghost" type="submit">退出</button>
-    </form>
-    {% endif %}
   </header>
 
-  <main class="container">
+  <main class="page-shell">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
-        <div class="flash {{ category }}">{{ message }}</div>
+        <div class="flash {{ category }}">
+          <span class="flash-dot"></span>
+          <span>{{ message }}</span>
+        </div>
       {% endfor %}
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+
+  <footer class="site-footer">
+    <div class="footer-shell">
+      <span>ACLClouds-Keep</span>
+      <span>Self-hosted · Low-frequency · Docker ready</span>
+    </div>
+  </footer>
 </body>
 </html>
