@@ -10,6 +10,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
 DASHBOARD_URL = "https://aclclouds.com/dashboard"
+PROJECTS_URL = "https://aclclouds.com/dashboard/projects"
 SCREENSHOT_DIR = Path("screenshots")
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
@@ -276,19 +277,32 @@ def log_page_links(page, limit=80):
 
 
 def collect_server_hrefs(page):
-    try:
-        page.wait_for_selector('a[href*="/server/"]', timeout=10000)
-    except PlaywrightTimeout:
-        pass
-
+    """Collect project detail links from the current ACLClouds projects page."""
+    page.wait_for_timeout(1200)
     hrefs = []
-    for link in page.locator('a[href*="/server/"]').all():
+    try:
+        links = page.locator("a").all()
+    except Exception:
+        return hrefs
+
+    for link in links:
         try:
             href = link.get_attribute("href")
         except Exception:
             href = None
-        if href and href not in hrefs:
+
+        if not href:
+            continue
+
+        # Current dashboard uses /dashboard/projects for the list.
+        # Keep only child/detail routes, not filters such as ?type=discord.
+        if href.startswith("/dashboard/projects/") and href not in hrefs:
             hrefs.append(href)
+
+        # Legacy/fallback pattern used by older panel versions.
+        elif "/server/" in href and href not in hrefs:
+            hrefs.append(href)
+
     return hrefs
 
 
@@ -343,6 +357,10 @@ def run_account(browser, account_no: int, cookie_secret: str) -> bool:
         if maybe_reactivate(page):
             page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2500)
+
+        log("📁 Opening My services...")
+        page.goto(PROJECTS_URL, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
 
         hrefs = collect_server_hrefs(page)
         if not hrefs:
