@@ -9,14 +9,45 @@ Debian A / IP A → ACLClouds Keep → Account A
 Debian B / IP B → ACLClouds Keep → Account B
 ```
 
-## 1. 检查 Docker
+## 1. 一键安装
+
+如果仓库已经通过 1Panel / Git 拉取到服务器：
+
+```bash
+cd /opt/ACLClouds-keep
+sudo bash install.sh --instance Account-A
+```
+
+第二台服务器：
+
+```bash
+cd /opt/ACLClouds-keep
+sudo bash install.sh --instance Account-B
+```
+
+安装脚本会自动检查 Docker；如果 Docker 不存在，会自动安装 Docker Engine 和 Compose v2，并自动生成 APP_SECRET 与 Web 管理密码。
+
+如果服务器已经配置 GitHub SSH / Deploy Key，可用一行：
+
+```bash
+sudo bash -c 'command -v git >/dev/null || (apt-get update -y && apt-get install -y git); if [ -d /opt/ACLClouds-keep/.git ]; then cd /opt/ACLClouds-keep && git pull --ff-only; else git clone git@github.com:frbico/ACLClouds-keep.git /opt/ACLClouds-keep; fi; cd /opt/ACLClouds-keep && bash install.sh'
+```
+
+安装完成后终端会打印：
+
+- 生成的 Web 管理密码；
+- 本地管理地址；
+- 1Panel 应填写的反向代理地址；
+- Docker 状态和日志命令。
+
+## 2. 手动检查 Docker
 
 ```bash
 docker --version
 docker compose version
 ```
 
-## 2. 克隆
+## 3. 手动克隆
 
 ```bash
 cd /opt
@@ -26,7 +57,7 @@ cd ACLClouds-keep
 
 仓库为 Private 时，用你自己的 GitHub 凭证、Deploy Key 或 1Panel Git 功能拉取。
 
-## 3. 配置
+## 4. 手动配置
 
 ```bash
 cp .env.example .env
@@ -44,7 +75,7 @@ INSTANCE_NAME=Account-A
 
 第二台机器设置不同的 `INSTANCE_NAME`、`APP_SECRET` 和 `WEB_PASSWORD`。
 
-## 4. 启动
+## 5. 手动启动
 
 ```bash
 docker compose up -d --build
@@ -58,7 +89,7 @@ docker compose logs --tail=100 aclkeep
 127.0.0.1:8787
 ```
 
-## 5. 1Panel 反向代理
+## 6. 1Panel 反向代理
 
 在 1Panel：
 
@@ -81,7 +112,7 @@ WEB_SECURE_COOKIE=true
 docker compose up -d
 ```
 
-## 6. 第一次配置 Cookie
+## 7. 第一次配置 Cookie
 
 登录 Web 管理页：
 
@@ -99,7 +130,7 @@ docker compose up -d
 
 约 5 分钟后自动验证，也可手动点“仅检查一次”。
 
-## 7. 自动调度
+## 8. 自动调度
 
 默认目标：剩余 24 小时才再次访问。
 
@@ -113,7 +144,7 @@ docker compose up -d
 
 接近到期但续期未成功时，默认 6 小时后重试；Cookie/人机验证异常时冷却 24 小时。
 
-## 8. 更新
+## 9. 更新
 
 ```bash
 cd /opt/ACLClouds-keep
@@ -121,7 +152,7 @@ git pull
 docker compose up -d --build
 ```
 
-## 9. 备份
+## 10. 备份
 
 ```bash
 docker compose stop
