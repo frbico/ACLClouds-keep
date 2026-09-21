@@ -34,6 +34,14 @@
 
 ## 最简单
 
+如果当前就是 `root`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
+```
+
+普通 sudo 用户：
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
 ```
@@ -243,24 +251,23 @@ sudo bash install.sh --update
 
 # 卸载
 
-停止容器，但保留配置和数据库：
+卸载现在只有一种模式：**彻底删除**。
+
+会删除容器、项目镜像、`.env`、Cookie、SQLite 数据库、日志和整个项目目录，不保留旧数据。
+
+如果当前就是 `root`：
 
 ```bash
-cd /opt/ACLClouds-keep
-sudo bash uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | bash
 ```
 
-同时删除本地 Cookie / 数据：
+普通 sudo 用户：
 
 ```bash
-sudo bash uninstall.sh --purge-data
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | sudo bash
 ```
 
-连项目目录一起删除：
-
-```bash
-sudo bash uninstall.sh --purge-data --remove-files
-```
+卸载后重新执行安装命令就是全新安装。
 
 ---
 
