@@ -255,6 +255,26 @@ def maybe_start_if_offline(page) -> bool:
         return False
 
 
+def log_page_links(page, limit=80):
+    """Log non-sensitive link metadata to diagnose dashboard route changes."""
+    try:
+        links = page.locator("a").all()
+        log(f"  🔎 Page URL: {page.url}")
+        log(f"  🔗 Found {len(links)} anchor element(s).")
+        for i, link in enumerate(links[:limit], start=1):
+            try:
+                href = link.get_attribute("href") or ""
+                text_value = " ".join((link.inner_text(timeout=500) or "").split())
+                aria = link.get_attribute("aria-label") or ""
+                title = link.get_attribute("title") or ""
+                meta = " | ".join(x for x in [text_value, aria, title] if x)
+                log(f"  LINK {i}: href={href!r} meta={meta!r}")
+            except Exception:
+                continue
+    except Exception as exc:
+        log(f"  ⚠️ Could not enumerate page links: {exc}")
+
+
 def collect_server_hrefs(page):
     try:
         page.wait_for_selector('a[href*="/server/"]', timeout=10000)
@@ -327,6 +347,7 @@ def run_account(browser, account_no: int, cookie_secret: str) -> bool:
         hrefs = collect_server_hrefs(page)
         if not hrefs:
             log(f"❌ Account {account_no}: no server links found.")
+            log_page_links(page)
             save_screenshot(page, f"{label}_no_servers")
             return False
 
