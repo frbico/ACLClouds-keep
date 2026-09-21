@@ -9,6 +9,7 @@ Do not commit or publish:
 - ACLClouds Cookie values
 - `.env`
 - `APP_SECRET`
+- `WEB_USERNAME`
 - `WEB_PASSWORD`
 - GitHub tokens
 - SSH private keys
