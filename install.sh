@@ -11,7 +11,6 @@ warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-INSTANCE_NAME_ARG="${INSTANCE_NAME:-}"
 HOST_PORT_ARG="${HOST_PORT:-}"
 BIND_ADDRESS_ARG="${BIND_ADDRESS:-}"
 DO_UPDATE=0
@@ -20,14 +19,13 @@ GENERATED_PASSWORD=0
 
 usage() {
   cat <<'EOF'
-ACLClouds Keep - one-click installer
+ACLClouds-Keep - one-click installer
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
   sudo bash install.sh [options]
 
 Options:
-  --instance NAME       Web UI instance name
   --port PORT           Host port (default: 8787)
   --bind ADDRESS        Bind address (default: 127.0.0.1)
   --install-dir PATH    Installation directory (default: /opt/ACLClouds-keep)
@@ -38,7 +36,6 @@ Options:
 Environment overrides:
   APP_SECRET
   WEB_PASSWORD
-  INSTANCE_NAME
   HOST_PORT
   BIND_ADDRESS
   INSTALL_DIR
@@ -47,11 +44,6 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --instance)
-      [[ $# -ge 2 ]] || die "--instance requires a value"
-      INSTANCE_NAME_ARG="$2"
-      shift 2
-      ;;
     --port)
       [[ $# -ge 2 ]] || die "--port requires a value"
       HOST_PORT_ARG="$2"
@@ -181,17 +173,15 @@ create_or_update_env() {
   if [[ ! -f "$env_file" ]]; then
     log "Creating .env with secure defaults..."
 
-    local secret password instance port bind
+    local secret password port bind
     secret="${APP_SECRET:-$(openssl rand -hex 32)}"
     password="${WEB_PASSWORD:-$(openssl rand -hex 12)}"
-    instance="${INSTANCE_NAME_ARG:-ACLClouds-Keep-$(hostname -s)}"
     port="${HOST_PORT_ARG:-8787}"
     bind="${BIND_ADDRESS_ARG:-127.0.0.1}"
 
     cat > "$env_file" <<EOF
 APP_SECRET=$secret
 WEB_PASSWORD=$password
-INSTANCE_NAME=$instance
 WEB_SECURE_COOKIE=false
 TARGET_REMAINING_HOURS=24
 RETRY_HOURS=6
@@ -215,7 +205,6 @@ EOF
     ensure_env_key "$env_file" "HOST_PORT" "8787"
     ensure_env_key "$env_file" "CONTAINER_NAME" "aclclouds-keep"
 
-    [[ -n "$INSTANCE_NAME_ARG" ]] && set_env_value "$env_file" "INSTANCE_NAME" "$INSTANCE_NAME_ARG"
     [[ -n "$HOST_PORT_ARG" ]] && set_env_value "$env_file" "HOST_PORT" "$HOST_PORT_ARG"
     [[ -n "$BIND_ADDRESS_ARG" ]] && set_env_value "$env_file" "BIND_ADDRESS" "$BIND_ADDRESS_ARG"
   fi
@@ -262,13 +251,12 @@ main() {
   mkdir -p "$dir/data"
   chmod 700 "$dir/data" 2>/dev/null || true
 
-  local port bind instance password
+  local port bind password
   port="$(read_env_value "$dir/.env" HOST_PORT)"
   bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
-  instance="$(read_env_value "$dir/.env" INSTANCE_NAME)"
   password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
 
-  log "Building and starting ACLClouds Keep..."
+  log "Building and starting ACLClouds-Keep..."
   docker compose up -d --build
 
   wait_for_health "$port" || {
@@ -279,9 +267,8 @@ main() {
 
   echo
   echo "============================================================"
-  echo " ACLClouds Keep installed"
+  echo " ACLClouds-Keep installed"
   echo "============================================================"
-  echo " Instance:      $instance"
   echo " Install dir:   $dir"
   echo " Local URL:     http://127.0.0.1:$port"
   echo " Published on:  $bind:$port"
