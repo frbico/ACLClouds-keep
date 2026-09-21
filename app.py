@@ -114,7 +114,7 @@ def read_current_version() -> str:
 
 
 def version_tuple(version: str):
-    match = re.match(r"^\\s*v?(\\d+)\\.(\\d+)\\.(\\d+)", version or "")
+    match = re.match(r"^\s*v?(\d+)\.(\d+)\.(\d+)", version or "")
     if not match:
         return (0, 0, 0)
     return tuple(int(part) for part in match.groups())
@@ -128,7 +128,7 @@ def fetch_latest_version() -> str:
     with urllib.request.urlopen(req, timeout=6) as response:
         latest = response.read(64).decode("utf-8", "replace").strip()
 
-    if not re.match(r"^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", latest):
+    if not re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", latest):
         raise ValueError("GitHub returned an invalid VERSION value.")
     return latest
 
