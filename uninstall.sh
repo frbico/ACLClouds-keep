@@ -2,24 +2,31 @@
 set -Eeuo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/ACLClouds-keep}"
-PURGE_DATA=0
-REMOVE_FILES=0
+CONTAINER_NAME="${CONTAINER_NAME:-aclclouds-keep}"
+IMAGE_NAME="${IMAGE_NAME:-aclclouds-keep:local}"
 
 usage() {
   cat <<'EOF'
-ACLClouds Keep uninstaller
+ACLClouds-Keep complete uninstaller
 
 Usage:
-  sudo bash uninstall.sh [options]
+  sudo bash uninstall.sh
+  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | sudo bash
 
 Options:
   --install-dir PATH   Installation directory (default: /opt/ACLClouds-keep)
-  --purge-data         Delete local database and .env (irreversible)
-  --remove-files       Delete the project directory after stopping containers
   -h, --help           Show this help
 
-Default behavior:
-  Stops and removes the Docker container/network, but keeps .env and ./data.
+This uninstaller ALWAYS removes:
+  - Docker container
+  - Compose resources
+  - local Docker image
+  - .env
+  - encrypted Cookie/database
+  - logs/data
+  - the entire project directory
+
+There is no preserve-data mode.
 EOF
 }
 
@@ -29,14 +36,6 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--install-dir requires a value" >&2; exit 1; }
       INSTALL_DIR="$2"
       shift 2
-      ;;
-    --purge-data)
-      PURGE_DATA=1
-      shift
-      ;;
-    --remove-files)
-      REMOVE_FILES=1
-      shift
       ;;
     -h|--help)
       usage
@@ -50,26 +49,23 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "${EUID}" -eq 0 ]] || { echo "Run with sudo/root." >&2; exit 1; }
-[[ -d "$INSTALL_DIR" ]] || { echo "Directory not found: $INSTALL_DIR" >&2; exit 1; }
 
-cd "$INSTALL_DIR"
+echo "[ACLKeep] Removing ACLClouds-Keep completely..."
 
-if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  docker compose down --remove-orphans || true
+if command -v docker >/dev/null 2>&1; then
+  if [[ -f "$INSTALL_DIR/docker-compose.yml" ]] && docker compose version >/dev/null 2>&1; then
+    (
+      cd "$INSTALL_DIR"
+      docker compose down --remove-orphans --volumes --rmi local || true
+    )
+  fi
+
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker image rm -f "$IMAGE_NAME" >/dev/null 2>&1 || true
 fi
 
-if [[ "$PURGE_DATA" -eq 1 ]]; then
-  rm -rf "$INSTALL_DIR/data"
-  rm -f "$INSTALL_DIR/.env"
-  echo "Local data and .env deleted."
-else
-  echo "Local data and .env preserved."
-fi
+cd /
+rm -rf -- "$INSTALL_DIR"
 
-if [[ "$REMOVE_FILES" -eq 1 ]]; then
-  cd /
-  rm -rf "$INSTALL_DIR"
-  echo "Project directory deleted: $INSTALL_DIR"
-else
-  echo "Project files preserved: $INSTALL_DIR"
-fi
+echo "[OK] ACLClouds-Keep has been completely removed."
+echo "[OK] Project files, .env, Cookie/database and local data are gone."
