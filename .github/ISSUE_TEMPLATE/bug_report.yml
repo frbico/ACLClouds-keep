@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible problem
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not paste ACLClouds Cookies, .env, APP_SECRET, WEB_PASSWORD, tokens, or server credentials.**
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: main or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Debian 12 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker / Compose version
+      placeholder: Docker 27.x, Compose v2.x
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Remove all secrets before pasting.
+      render: shell
