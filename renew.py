@@ -247,7 +247,10 @@ def maybe_start_if_offline(page) -> bool:
         return False
 
     try:
-        start.click()
+        if not start.is_enabled():
+            log("  ℹ️ Start button is disabled; server is likely already running or not startable.")
+            return False
+        start.click(timeout=5000)
         page.wait_for_timeout(1800)
         log("  ▶️ Server appears offline; Start was clicked.")
         return True
