@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py automation.py storage.py crypto_utils.py ./
+COPY app.py automation.py storage.py crypto_utils.py VERSION ./
 COPY templates ./templates
 COPY static ./static
 
