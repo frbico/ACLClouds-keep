@@ -26,7 +26,15 @@ Debian B / Public IP B
 
 ## 1. 一键安装
 
-服务器 SSH 中直接执行：
+服务器 SSH 中直接执行。
+
+如果当前就是 `root`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
+```
+
+普通 sudo 用户：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
@@ -239,21 +247,16 @@ docker compose start
 
 ## 10. 卸载
 
-只停止容器，保留配置和数据库：
+卸载脚本固定执行彻底删除，不保留 `.env`、Cookie、数据库或项目文件。
+
+root 用户：
 
 ```bash
-cd /opt/ACLClouds-keep
-sudo bash uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | bash
 ```
 
-删除 Cookie / 数据：
+普通 sudo 用户：
 
 ```bash
-sudo bash uninstall.sh --purge-data
-```
-
-彻底删除：
-
-```bash
-sudo bash uninstall.sh --purge-data --remove-files
+curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | sudo bash
 ```
