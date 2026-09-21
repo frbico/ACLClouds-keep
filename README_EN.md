@@ -1,4 +1,4 @@
-# ACLClouds Keep
+# ACLClouds-Keep
 
 Self-hosted, low-frequency ACLClouds free-service renewal helper with a small Web UI.
 
@@ -46,7 +46,7 @@ For production, put 1Panel/Nginx/Caddy in front of it with HTTPS.
 
 The default target is 24 hours before expiry.
 
-If a service has about 96 hours remaining after renewal, ACLClouds Keep waits locally for roughly 72 hours before the next external visit. The internal scheduler only checks SQLite and does not open Chromium or contact ACLClouds until the calculated time.
+If a service has about 96 hours remaining after renewal, ACLClouds-Keep waits locally for roughly 72 hours before the next external visit. The internal scheduler only checks SQLite and does not open Chromium or contact ACLClouds until the calculated time.
 
 Defaults:
 
