@@ -21,14 +21,11 @@ usage() {
 ACLClouds-Keep - one-click installer
 
 Usage:
-  # Already root:
+  # Run as root:
   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
 
-  # Normal sudo user:
-  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
-
-  # Local file:
-  sudo bash install.sh [options]
+  # Local file as root:
+  bash install.sh [options]
 
 Options:
   --port PORT           Host port (default: 8787)
@@ -78,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "${EUID}" -eq 0 ]] || die "Run as root (or pipe to sudo bash)."
+[[ "${EUID}" -eq 0 ]] || die "Run this installer as root."
 
 export DEBIAN_FRONTEND=noninteractive
 
