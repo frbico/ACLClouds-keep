@@ -205,9 +205,211 @@ EOF
     ensure_env_key "$env_file" "HOST_PORT" "8787"
     ensure_env_key "$env_file" "CONTAINER_NAME" "aclclouds-keep"
 
-    [[ -n "$HOST_PORT_ARG" ]] && set_env_value "$env_file" "HOST_PORT" "$HOST_PORT_ARG"
-    [[ -n "$BIND_ADDRESS_ARG" ]] && set_env_value "$env_file" "BIND_ADDRESS" "$BIND_ADDRESS_ARG"
+    if [[ -n "$HOST_PORT_ARG" ]]; then
+      set_env_value "$env_file" "HOST_PORT" "$HOST_PORT_ARG"
+    fi
+    if [[ -n "$BIND_ADDRESS_ARG" ]]; then
+      set_env_value "$env_file" "BIND_ADDRESS" "$BIND_ADDRESS_ARG"
+    fi
   fi
+
+  # Older installs may have an incomplete .env. Make required values self-healing.
+  if ! grep -qE '^APP_SECRET=.{24,}
+
+read_env_value() {
+  local file="$1" key="$2"
+  grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
+}
+
+wait_for_health() {
+  local port="$1"
+  local i
+  log "Waiting for the Web UI health check..."
+
+  for i in $(seq 1 45); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      ok "Web service is healthy."
+      return 0
+    fi
+    sleep 2
+  done
+
+  warn "Health endpoint did not become ready within 90 seconds."
+  return 1
+}
+
+main() {
+  ensure_base_tools
+  ensure_docker
+  validate_inputs
+
+  local dir
+  dir="$(find_or_clone_project)"
+  cd "$dir"
+
+  if [[ -d .git ]]; then
+    log "Syncing latest source..."
+    git fetch --depth 1 origin main
+    git reset --hard origin/main
+  fi
+
+  create_or_update_env "$dir"
+  mkdir -p "$dir/data"
+  chmod 700 "$dir/data" 2>/dev/null || true
+
+  local port bind password
+  port="$(read_env_value "$dir/.env" HOST_PORT)"
+  bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
+  password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
+
+  log "Building and starting ACLClouds-Keep..."
+  docker compose up -d --build
+
+  wait_for_health "$port" || {
+    echo
+    warn "Container did not pass the health check. Recent logs:"
+    docker compose logs --tail=80 aclkeep || true
+  }
+
+  echo
+  echo "============================================================"
+  echo " ACLClouds-Keep installed"
+  echo "============================================================"
+  echo " Install dir:   $dir"
+  echo " Local URL:     http://127.0.0.1:$port"
+  echo " Published on:  $bind:$port"
+  echo
+  echo " 1Panel / Nginx reverse proxy target:"
+  echo "   http://127.0.0.1:$port"
+  echo
+  if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
+    echo " Web admin password:"
+    echo "   $password"
+    echo
+    echo " Save this password now. It is stored in $dir/.env"
+  else
+    echo " Existing Web admin password was preserved."
+  fi
+  echo
+  echo " After HTTPS reverse proxy works, enable Secure cookies:"
+  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
+  echo
+  echo " Update later:"
+  echo "   cd '$dir' && sudo bash install.sh --update"
+  echo
+  echo " Status:"
+  echo "   cd '$dir' && docker compose ps"
+  echo
+  echo " Logs:"
+  echo "   cd '$dir' && docker compose logs -f --tail=100 aclkeep"
+  echo "============================================================"
+}
+
+main
+ "$env_file"; then
+    set_env_value "$env_file" "APP_SECRET" "$(openssl rand -hex 32)"
+    warn "APP_SECRET was missing/invalid and has been regenerated."
+  fi
+
+  if ! grep -qE '^WEB_PASSWORD=.{8,}
+
+read_env_value() {
+  local file="$1" key="$2"
+  grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
+}
+
+wait_for_health() {
+  local port="$1"
+  local i
+  log "Waiting for the Web UI health check..."
+
+  for i in $(seq 1 45); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      ok "Web service is healthy."
+      return 0
+    fi
+    sleep 2
+  done
+
+  warn "Health endpoint did not become ready within 90 seconds."
+  return 1
+}
+
+main() {
+  ensure_base_tools
+  ensure_docker
+  validate_inputs
+
+  local dir
+  dir="$(find_or_clone_project)"
+  cd "$dir"
+
+  if [[ "$DO_UPDATE" -eq 1 && -d .git ]]; then
+    log "Updating source..."
+    git fetch --depth 1 origin main
+    git reset --hard origin/main
+  fi
+
+  create_or_update_env "$dir"
+  mkdir -p "$dir/data"
+  chmod 700 "$dir/data" 2>/dev/null || true
+
+  local port bind password
+  port="$(read_env_value "$dir/.env" HOST_PORT)"
+  bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
+  password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
+
+  log "Building and starting ACLClouds-Keep..."
+  docker compose up -d --build
+
+  wait_for_health "$port" || {
+    echo
+    warn "Container did not pass the health check. Recent logs:"
+    docker compose logs --tail=80 aclkeep || true
+  }
+
+  echo
+  echo "============================================================"
+  echo " ACLClouds-Keep installed"
+  echo "============================================================"
+  echo " Install dir:   $dir"
+  echo " Local URL:     http://127.0.0.1:$port"
+  echo " Published on:  $bind:$port"
+  echo
+  echo " 1Panel / Nginx reverse proxy target:"
+  echo "   http://127.0.0.1:$port"
+  echo
+  if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
+    echo " Web admin password:"
+    echo "   $password"
+    echo
+    echo " Save this password now. It is stored in $dir/.env"
+  else
+    echo " Existing Web admin password was preserved."
+  fi
+  echo
+  echo " After HTTPS reverse proxy works, enable Secure cookies:"
+  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
+  echo
+  echo " Update later:"
+  echo "   cd '$dir' && sudo bash install.sh --update"
+  echo
+  echo " Status:"
+  echo "   cd '$dir' && docker compose ps"
+  echo
+  echo " Logs:"
+  echo "   cd '$dir' && docker compose logs -f --tail=100 aclkeep"
+  echo "============================================================"
+}
+
+main
+ "$env_file"; then
+    set_env_value "$env_file" "WEB_PASSWORD" "$(openssl rand -hex 12)"
+    GENERATED_PASSWORD=1
+    warn "WEB_PASSWORD was missing/invalid and has been regenerated."
+  fi
+
+  return 0
 }
 
 read_env_value() {
