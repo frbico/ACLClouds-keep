@@ -1,70 +1,160 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="hero">
-  <div>
-    <h1>ACLClouds 保活状态</h1>
-    <p class="muted">不按天固定访问；成功读取剩余时间后，本地等待到接近目标续期时间再访问 ACLClouds。</p>
+<section class="hero-panel">
+  <div class="hero-copy">
+    <span class="eyebrow">SERVICE STATUS</span>
+    <h1>ACLClouds 保活控制台</h1>
+    <p>根据真实剩余时间自适应调度。平时在本地安静等待，只在接近续期窗口时访问 ACLClouds。</p>
   </div>
-  <span class="badge {% if state.auto_enabled %}ok{% else %}off{% endif %}">
+  <div class="hero-status {% if state.auto_enabled %}is-on{% else %}is-off{% endif %}">
+    <span class="status-pulse"></span>
     {% if state.auto_enabled %}自动模式已开启{% else %}自动模式已关闭{% endif %}
-  </span>
-</div>
+  </div>
+</section>
 
-<div class="grid">
-  <section class="card metric"><span>剩余时间</span><strong>{{ state.remaining_minutes|fmt_remaining }}</strong></section>
-  <section class="card metric"><span>下次外部检查</span><strong class="small">{{ state.next_check_at|fmt_dt }}</strong></section>
-  <section class="card metric"><span>上次检查</span><strong class="small">{{ state.last_check_at|fmt_dt }}</strong></section>
-  <section class="card metric"><span>上次确认续期</span><strong class="small">{{ state.last_renew_at|fmt_dt }}</strong></section>
-</div>
-
-<section class="card">
-  <div class="row-between">
+<section class="metric-grid">
+  <article class="metric-card metric-blue">
+    <div class="metric-icon">⏳</div>
     <div>
-      <h2>当前状态</h2>
-      <p><b>{{ state.last_status }}</b></p>
-      <p class="muted">{{ state.last_message or "尚无运行记录。" }}</p>
+      <span class="metric-label">剩余时间</span>
+      <strong>{{ state.remaining_minutes|fmt_remaining }}</strong>
+      <small>当前服务有效期</small>
     </div>
-    <div class="status-list">
-      <div>Cookie：{% if state.cookie_configured %}<b class="good">已配置</b>{% else %}<b class="bad">未配置</b>{% endif %}</div>
-      <div>目标续期点：剩余 <b>{{ state.target_remaining_hours }} 小时</b></div>
-      <div>失败重试：<b>{{ state.retry_hours }} 小时</b></div>
+  </article>
+
+  <article class="metric-card metric-cyan">
+    <div class="metric-icon">↻</div>
+    <div>
+      <span class="metric-label">下次外部检查</span>
+      <strong class="metric-date">{{ state.next_check_at|fmt_dt }}</strong>
+      <small>到时才会访问 ACLClouds</small>
     </div>
+  </article>
+
+  <article class="metric-card metric-indigo">
+    <div class="metric-icon">✓</div>
+    <div>
+      <span class="metric-label">上次检查</span>
+      <strong class="metric-date">{{ state.last_check_at|fmt_dt }}</strong>
+      <small>最近一次状态读取</small>
+    </div>
+  </article>
+
+  <article class="metric-card metric-green">
+    <div class="metric-icon">+</div>
+    <div>
+      <span class="metric-label">上次确认续期</span>
+      <strong class="metric-date">{{ state.last_renew_at|fmt_dt }}</strong>
+      <small>已验证有效期增加</small>
+    </div>
+  </article>
+</section>
+
+<section class="content-grid">
+  <article class="panel panel-main">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">CURRENT STATE</span>
+        <h2>当前状态</h2>
+      </div>
+      <span class="state-chip {% if state.last_status in ['ok','renewed'] %}success{% elif state.last_status in ['never','cookie_updated'] %}neutral{% else %}warning{% endif %}">
+        {% if state.last_status == 'ok' %}运行正常
+        {% elif state.last_status == 'renewed' %}续期成功
+        {% elif state.last_status == 'never' %}等待首次检查
+        {% elif state.last_status == 'cookie_updated' %}Cookie 已更新
+        {% else %}{{ state.last_status }}{% endif %}
+      </span>
+    </div>
+
+    <div class="state-message">
+      <span class="state-message-icon">i</span>
+      <div>
+        <b>{{ state.last_message or "尚无运行记录。" }}</b>
+        <p>系统会根据剩余时间动态安排下一次外部访问，不会每天固定刷新页面。</p>
+      </div>
+    </div>
+  </article>
+
+  <aside class="panel config-panel">
+    <span class="eyebrow">CONFIGURATION</span>
+    <h2>运行配置</h2>
+    <div class="config-list">
+      <div>
+        <span>Cookie</span>
+        {% if state.cookie_configured %}
+          <b class="good"><span class="mini-dot"></span>已配置</b>
+        {% else %}
+          <b class="bad"><span class="mini-dot"></span>未配置</b>
+        {% endif %}
+      </div>
+      <div><span>目标续期点</span><b>剩余 {{ state.target_remaining_hours }} 小时</b></div>
+      <div><span>失败重试</span><b>{{ state.retry_hours }} 小时</b></div>
+      <div><span>自动模式</span><b>{% if state.auto_enabled %}开启{% else %}关闭{% endif %}</b></div>
+    </div>
+    <a class="text-link" href="{{ url_for('settings') }}">调整设置 <span>→</span></a>
+  </aside>
+</section>
+
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <span class="eyebrow">MANUAL ACTIONS</span>
+      <h2>手动操作</h2>
+      <p class="section-note">仅在需要立即确认状态或排错时使用；自动模式会按低频策略自行运行。</p>
+    </div>
+  </div>
+
+  <div class="action-grid">
+    <form method="post" action="{{ url_for('action_check') }}" class="action-card">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="action-icon">⌕</div>
+      <div class="action-copy">
+        <b>仅检查一次</b>
+        <span>读取剩余时间，不点击续期。</span>
+      </div>
+      <button class="button button-outline" type="submit">检查</button>
+    </form>
+
+    <form method="post" action="{{ url_for('action_auto') }}" class="action-card featured">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="action-icon">↻</div>
+      <div class="action-copy">
+        <b>按自动逻辑运行</b>
+        <span>达到目标剩余时间才尝试续期。</span>
+      </div>
+      <button class="button button-primary" type="submit">运行</button>
+    </form>
+
+    <form method="post" action="{{ url_for('action_renew') }}" class="action-card" onsubmit="return confirm('只有 ACLClouds 页面确实出现续期按钮时才会点击。继续？')">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="action-icon">+</div>
+      <div class="action-copy">
+        <b>手动尝试续期</b>
+        <span>仅在页面存在可用续期按钮时执行。</span>
+      </div>
+      <button class="button button-danger-soft" type="submit">尝试</button>
+    </form>
   </div>
 </section>
 
-<section class="card">
-  <h2>手动操作</h2>
-  <p class="muted">“仅检查”不会点击续期；“按自动逻辑运行”只有达到目标剩余时间才会续期。</p>
-  <div class="actions">
-    <form method="post" action="{{ url_for('action_check') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button type="submit">仅检查一次</button>
-    </form>
-    <form method="post" action="{{ url_for('action_auto') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="primary" type="submit">按自动逻辑运行</button>
-    </form>
-    <form method="post" action="{{ url_for('action_renew') }}" onsubmit="return confirm('只有 ACLClouds 页面确实出现续期按钮时才会点击。继续？')">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="danger-soft" type="submit">手动尝试续期</button>
-    </form>
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <span class="eyebrow">ACTIVITY</span>
+      <h2>最近日志</h2>
+    </div>
+    <a class="button button-outline button-small" href="{{ url_for('logs') }}">查看全部</a>
   </div>
-</section>
 
-<section class="card">
-  <div class="row-between">
-    <h2>最近日志</h2>
-    <a href="{{ url_for('logs') }}">查看全部 →</a>
-  </div>
-  <div class="events">
+  <div class="timeline">
     {% for e in events %}
-      <div class="event">
-        <span class="dot {{ e.level }}"></span>
+      <div class="timeline-item">
+        <span class="timeline-dot {{ e.level }}"></span>
         <time>{{ e.created_at|fmt_dt }}</time>
-        <span>{{ e.message }}</span>
+        <span class="timeline-message">{{ e.message }}</span>
       </div>
     {% else %}
-      <p class="muted">暂无日志。</p>
+      <div class="empty-state">暂无日志。</div>
     {% endfor %}
   </div>
 </section>
