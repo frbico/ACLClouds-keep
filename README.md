@@ -100,7 +100,80 @@ Renew → Confirm
 └── README.md
 ```
 
-# Docker 快速部署
+# 一键安装
+
+项目已经提供 `install.sh`。安装脚本会自动：
+
+- 检查并安装基础工具；
+- 检查 Docker + Docker Compose v2；
+- Docker 不存在时自动安装；
+- 自动生成 `APP_SECRET`；
+- 自动生成 Web 管理密码；
+- 创建 `.env`；
+- 构建并启动容器；
+- 创建持久化数据目录；
+- 等待健康检查；
+- 输出 1Panel 反向代理地址和管理密码。
+
+### 已经通过 1Panel / Git 拉取仓库
+
+进入项目目录后只需：
+
+```bash
+sudo bash install.sh
+```
+
+也可以直接指定实例名称：
+
+```bash
+sudo bash install.sh --instance Account-A
+```
+
+第二台服务器：
+
+```bash
+sudo bash install.sh --instance Account-B
+```
+
+### Private 仓库的一行安装
+
+本仓库是 Private，因此服务器必须先配置 GitHub SSH / Deploy Key。配置好以后可直接：
+
+```bash
+sudo bash -c 'command -v git >/dev/null || (apt-get update -y && apt-get install -y git); if [ -d /opt/ACLClouds-keep/.git ]; then cd /opt/ACLClouds-keep && git pull --ff-only; else git clone git@github.com:frbico/ACLClouds-keep.git /opt/ACLClouds-keep; fi; cd /opt/ACLClouds-keep && bash install.sh'
+```
+
+如果还没有配置 Deploy Key，最简单的是先在 1Panel 中使用 GitHub 凭证把仓库拉到服务器，然后执行：
+
+```bash
+sudo bash /opt/ACLClouds-keep/install.sh
+```
+
+> 不建议把 GitHub PAT 直接写进一键命令，因为它会进入 shell history。
+
+### 安装后更新
+
+以后更新代码和重建容器只需：
+
+```bash
+cd /opt/ACLClouds-keep && sudo bash install.sh --update
+```
+
+### 自定义端口 / 监听地址
+
+```bash
+sudo bash install.sh --port 8788 --bind 127.0.0.1 --instance Account-A
+```
+
+默认仍是：
+
+```text
+127.0.0.1:8787
+```
+
+适合直接交给 1Panel/Nginx 反向代理。
+
+# Docker 快速部署（手动方式）
 
 ## 1. 克隆
 
