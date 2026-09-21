@@ -4,7 +4,7 @@
   <div>
     <span class="eyebrow">PREFERENCES</span>
     <h1>运行设置</h1>
-    <p>建议每台服务器只配置一个 ACLClouds 账号，保持固定的公网出口 IP。</p>
+    <p>集中管理自动续期策略、ACLClouds 会话和管理员登录信息。</p>
   </div>
   <a class="button button-outline" href="{{ url_for('index') }}">返回状态</a>
 </section>
@@ -25,7 +25,7 @@
         <span class="setting-icon">↻</span>
         <div>
           <b>自动检查 / 续期</b>
-          <p>开启后按剩余时间动态安排检查，不按固定日期轮询。</p>
+          <p>开启后根据剩余时间动态安排下一次检查，不按固定日期轮询。</p>
         </div>
       </div>
       <span class="toggle">
@@ -39,7 +39,7 @@
         <span class="setting-icon">▶</span>
         <div>
           <b>离线时尝试 Start</b>
-          <p>默认关闭。仅当页面明确显示 OFFLINE 且 Start 可用时点击。</p>
+          <p>仅当页面明确显示 OFFLINE 且 Start 按钮可用时点击。</p>
         </div>
       </div>
       <span class="toggle">
@@ -73,7 +73,7 @@
           <input type="number" min="2" max="12" name="retry_hours" value="{{ retry_hours }}">
           <span>小时</span>
         </div>
-        <small>推荐 6。只在接近到期但续期未完成时使用。</small>
+        <small>推荐 6。仅在接近到期但续期未完成时使用。</small>
       </div>
     </div>
   </section>
@@ -93,8 +93,68 @@
     </div>
   </section>
 
+  <section class="panel settings-panel">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">ADMIN ACCOUNT</span>
+        <h2>管理员账号</h2>
+      </div>
+    </div>
+
+    <div class="form-grid">
+      <div class="field">
+        <label>管理员账号</label>
+        <input type="text" name="admin_username" maxlength="64" value="{{ admin_username }}" autocomplete="username" required>
+        <small>修改账号时需要在右侧输入当前管理员密码。</small>
+      </div>
+
+      <div class="field">
+        <label>当前管理员密码</label>
+        <input type="password" name="current_admin_password" autocomplete="current-password" placeholder="仅修改账号或密码时填写">
+        <small>用于确认本次管理员凭据修改。</small>
+      </div>
+
+      <div class="field">
+        <label>新管理员密码</label>
+        <input type="password" name="new_admin_password" autocomplete="new-password" placeholder="至少 8 个字符">
+        <small>留空表示不修改密码。</small>
+      </div>
+
+      <div class="field">
+        <label>确认新管理员密码</label>
+        <input type="password" name="confirm_admin_password" autocomplete="new-password" placeholder="再次输入新密码">
+        <small>两次密码必须完全一致。</small>
+      </div>
+    </div>
+  </section>
+
   <div class="settings-submit">
     <button class="button button-primary button-large" type="submit">保存设置</button>
   </div>
 </form>
+
+<section class="panel settings-panel update-panel">
+  <div class="update-info">
+    <div>
+      <span class="eyebrow">SOFTWARE UPDATE</span>
+      <h2>检查更新</h2>
+      <p>
+        当前版本 <b>v{{ current_version }}</b>
+        {% if latest_version %} · GitHub 最新版本 <b>v{{ latest_version }}</b>{% endif %}
+      </p>
+      {% if last_update_check_at %}
+        <small>上次检查：{{ last_update_check_at|fmt_dt }}</small>
+      {% endif %}
+      {% if update_available %}
+        <div class="update-notice">发现新版本。请在服务器 root 终端执行更新命令。</div>
+        <code class="update-command">curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash</code>
+      {% endif %}
+    </div>
+
+    <form method="post" action="{{ url_for('action_check_update') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="button button-outline button-update" type="submit">检查更新</button>
+    </form>
+  </div>
+</section>
 {% endblock %}
