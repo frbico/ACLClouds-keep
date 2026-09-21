@@ -15,7 +15,7 @@ from storage import add_event, get_bool, get_value, init_db, list_events, set_bo
 
 APP_SECRET = os.environ.get("APP_SECRET", "").strip()
 WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
-INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "ACLClouds Keep").strip() or "ACLClouds Keep"
+INSTANCE_NAME = "ACLClouds-Keep"
 
 TARGET_REMAINING_HOURS = int(os.environ.get("TARGET_REMAINING_HOURS", "24"))
 RETRY_HOURS = int(os.environ.get("RETRY_HOURS", "6"))
