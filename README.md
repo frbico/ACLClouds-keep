@@ -1,256 +1,276 @@
 # ACLClouds Keep
 
-[![ACLClouds Auto Renew](https://github.com/frbico/ACLClouds-keep/actions/workflows/renew.yml/badge.svg)](https://github.com/frbico/ACLClouds-keep/actions/workflows/renew.yml)
+一个用于 **自托管 ACLClouds 免费服务低频检查 / 续期** 的 Web 项目，适合 Debian、Docker 和 1Panel。
 
-一个用于 **ACLClouds 免费容器定时检查与续期** 的 GitHub Actions 项目。当前版本支持两个 ACLClouds 账号，并会遍历每个账号下发现的全部服务器。
+> 本项目不是 ACLClouds 官方项目。ACLClouds 当前将免费 Bot 服务描述为需要周期性手动续期；页面结构、验证机制或服务规则变化时，自动化可能失效。请自行确认使用方式符合你当前适用的服务条款。
 
-> [!IMPORTANT]
-> 这是非官方第三方自动化项目，与 ACLClouds 官方无隶属关系。ACLClouds 的页面、验证机制或服务规则发生变化时，本项目可能失效。请自行确认自动化操作符合你当前使用的服务规则。
+## 架构
+
+本仓库已经完全改为 **Self-hosted**：
+
+```text
+Debian Server A / 固定公网 IP A
+└── Docker
+    └── ACLClouds Keep
+        └── Account A Cookie
+
+Debian Server B / 固定公网 IP B
+└── Docker
+    └── ACLClouds Keep
+        └── Account B Cookie
+```
+
+推荐一个账号对应一台服务器。仓库中的 GitHub Actions 只做语法检查和 Docker 构建测试，**不会登录 ACLClouds，也不会执行续期**。
+
+## 低频运行逻辑
+
+默认：
+
+```env
+TARGET_REMAINING_HOURS=24
+RETRY_HOURS=6
+BLOCKED_RETRY_HOURS=24
+SCHEDULER_TICK_MINUTES=10
+```
+
+如果续期后约有 96 小时：
+
+```text
+成功读取 / 续期
+    ↓
+剩余约 96h
+    ↓
+本地等待约 72h
+期间完全不访问 ACLClouds
+    ↓
+剩余约 24h 时再访问
+    ↓
+Renew → Confirm
+    ↓
+重新读取剩余时间
+    ↓
+重新计算下次检查
+```
+
+正常情况下，大约 **每 3 天才真正访问 ACLClouds 一次**。
+
+程序每 10 分钟只检查本地 SQLite 的 `next_check_at`，不会访问 ACLClouds，也不会启动 Chromium。
+
+如果已经接近到期但续期未成功，默认 6 小时后再试；Cookie 失效或出现人机验证时进入 24 小时冷却。
 
 ## 功能
 
-- 支持两个账号：`ACL_COOKIES_1`、`ACL_COOKIES_2`
-- 每天自动检查一次，也支持手动运行
-- 自动遍历每个账号中的全部服务器
-- 检测到 `Renew / Renouveler / 续期` 后执行续期
-- 支持 `Renew now / Renouveler maintenant / 立即续期`
-- 出现确认弹窗时自动点击 `Confirm / Confirmer / 确认`
-- 检测到 `Reactivate` 时尝试重新激活
-- 页面明确显示服务器离线时尝试点击 `Start`
-- Cookie 失效、页面结构变化或反自动化验证时让 Action 明确失败
-- 失败时上传诊断截图 Artifact，默认保留 3 天
-- Cookie 仅通过 GitHub Actions Secrets 注入，不写入仓库
-- 支持可选 HTTP / HTTPS / SOCKS5 代理
-- 使用 concurrency 防止多个续期任务同时运行
-
-## 快速开始
-
-### 1. 设置 GitHub Actions Secrets
-
-打开本仓库：
-
-```text
-Settings
-→ Secrets and variables
-→ Actions
-→ New repository secret
-```
-
-添加：
-
-| Secret | 必需 | 用途 |
-|---|---|---|
-| `ACL_COOKIES_1` | 是 | 第一个 ACLClouds 账号的 Cookie |
-| `ACL_COOKIES_2` | 是 | 第二个 ACLClouds 账号的 Cookie |
-| `PROXY_URL` | 否 | 可选 HTTP/HTTPS/SOCKS5 代理 |
-
-> [!CAUTION]
-> Cookie 相当于登录凭证。不要提交到代码、Issue、README 或 Actions 日志。若 Cookie 曾泄露，请使旧会话失效并重新登录。
-
-### 2. 获取 Cookie
-
-分别登录：
-
-```text
-https://aclclouds.com/dashboard
-```
-
-在 Chrome / Edge 中：
-
-1. 按 `F12` 打开开发者工具。
-2. 进入 **Network / 网络**。
-3. 刷新页面。
-4. 点击一个发往 `aclclouds.com` 的请求。
-5. 在 **Request Headers** 中找到 `Cookie:`。
-6. 复制 `Cookie:` 后面的完整内容。
-7. 第一个账号保存到 `ACL_COOKIES_1`，第二个账号保存到 `ACL_COOKIES_2`。
-
-示例格式：
-
-```text
-name1=value1; name2=value2; name3=value3
-```
-
-`renew.py` 也支持浏览器导出的 JSON Cookie 数组。
-
-### 3. 第一次手动测试
-
-打开：
-
-```text
-Actions
-→ ACLClouds Auto Renew
-→ Run workflow
-```
-
-建议第一次一定手动运行，确认两个账号都被识别。
-
-正常日志大致如下：
-
-```text
-Configured ACLClouds accounts: 2
-
-===== Account 1 =====
-🌐 Opening ACLClouds dashboard...
-🖥️ Found 1 server(s).
-⏳ Approx. time remaining: 3d 18h 0m
-✅ No active renewal button; likely outside the renewal window.
-
-===== Account 2 =====
-...
-```
-
-进入续期窗口后：
-
-```text
-🔄 Renewal button available; clicking...
-✅ Confirmation clicked.
-✅ Remaining time after renewal: 3d 23h 0m
-```
-
-### 4. 自动执行时间
-
-当前工作流：
-
-```yaml
-cron: "17 3 * * *"
-```
-
-即每天 **UTC 03:17** 自动检查一次。
-
-GitHub Actions 的计划任务可能发生延迟，因此项目不会依赖到期前最后几分钟才执行。
-
-## Cookie 失效
-
-如果日志出现：
-
-```text
-Account 1: cookie expired; redirected to login page.
-```
-
-重新登录对应 ACLClouds 账号，复制新的 Cookie，然后更新：
-
-```text
-Settings
-→ Secrets and variables
-→ Actions
-→ ACL_COOKIES_1
-```
-
-第二个账号对应 `ACL_COOKIES_2`。不需要修改源码。
-
-## Cloudflare / 人机验证
-
-如果页面出现 `Verify you are human`、`Just a moment`、`Access denied` 等内容，脚本会报错并保存诊断截图，**不会尝试绕过 CAPTCHA 或交互式验证**。
-
-如果只是 GitHub Runner 的网络出口与 ACLClouds 不兼容，可以自行设置：
-
-```text
-PROXY_URL
-```
-
-支持：
-
-```text
-http://user:pass@host:port
-https://user:pass@host:port
-socks5://user:pass@host:port
-```
-
-代理凭证也必须放在 GitHub Secret 中。
+- Web 管理界面
+- Cookie 加密保存
+- 自适应下次检查时间
+- 显示剩余时间 / 下次外部检查 / 上次检查 / 上次续期
+- 自动续期
+- 手动仅检查
+- 手动按自动规则运行
+- 手动尝试续期
+- 可选 OFFLINE → Start
+- 本地事件日志
+- Docker Healthcheck
+- Docker 日志轮转
+- CSRF 防护
+- 默认仅监听 127.0.0.1
+- 适配 1Panel HTTPS 反向代理
+- 遇到 CAPTCHA / Cloudflare 人机验证时不绕过
 
 ## 项目结构
 
 ```text
 .
-├── .github/
-│   └── workflows/
-│       └── renew.yml
-├── renew.py
-├── requirements.txt
+├── .github/workflows/ci.yml
+├── data/.gitkeep
+├── deploy/1panel.md
+├── static/style.css
+├── templates/
+├── .dockerignore
+├── .env.example
 ├── .gitignore
-├── LICENSE
+├── Dockerfile
+├── docker-compose.yml
+├── app.py
+├── automation.py
+├── crypto_utils.py
+├── storage.py
+├── requirements.txt
 ├── SECURITY.md
 └── README.md
 ```
 
-## 工作流程
+# Docker 快速部署
 
-```text
-GitHub Actions
-      │
-      ├─ Account 1 Cookie
-      ├─ Account 2 Cookie
-      │
-      ▼
-ACLClouds Dashboard
-      │
-      ├─ 检查 Reactivate
-      ├─ 枚举服务器
-      ├─ 检查剩余时间
-      ├─ 检查 Renew
-      ├─ 必要时 Confirm
-      └─ 明确 Offline 时尝试 Start
-```
-
-## 本地测试
-
-需要 Python 3.11+。
-
-Linux / macOS：
+## 1. 克隆
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium
-
-export ACL_COOKIES_1='...'
-export ACL_COOKIES_2='...'
-python renew.py
+cd /opt
+git clone https://github.com/frbico/ACLClouds-keep.git
+cd ACLClouds-keep
 ```
 
-Windows PowerShell：
+Private 仓库请使用你自己的 GitHub 凭证 / Deploy Key。
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m playwright install chromium
+## 2. 创建 .env
 
-$env:ACL_COOKIES_1="..."
-$env:ACL_COOKIES_2="..."
-python renew.py
+```bash
+cp .env.example .env
+openssl rand -hex 32
+nano .env
 ```
 
-## 排错
+至少设置：
 
-失败时工作流会尝试上传：
+```env
+APP_SECRET=刚生成的长随机字符串
+WEB_PASSWORD=管理后台强密码
+INSTANCE_NAME=Account-A
+```
+
+第二台服务器设置 `INSTANCE_NAME=Account-B`。两台机器建议使用不同的 APP_SECRET 和 WEB_PASSWORD。
+
+## 3. 启动
+
+```bash
+docker compose up -d --build
+```
+
+检查：
+
+```bash
+docker compose ps
+docker compose logs --tail=100 aclkeep
+```
+
+默认管理页只监听：
 
 ```text
-aclclouds-renew-screenshots
+127.0.0.1:8787
 ```
 
-可在失败的 GitHub Actions Run 页面底部下载 Artifact。
+## 4. 1Panel
 
-常见情况：
+完整步骤：[deploy/1panel.md](deploy/1panel.md)
 
-- **跳转登录页**：Cookie 已失效。
-- **找不到服务器**：页面结构可能改变，或账号当前没有可见服务器。
-- **Cloudflare / Verify you are human**：需要人工处理验证，或检查网络出口。
-- **没有 Renew 按钮**：通常尚未进入允许续期的时间窗口。
-- **找到了 Renew 但点击失败**：查看失败日志和诊断截图。
+推荐反向代理：
 
-## 安全建议
+```text
+https://keep-a.example.com
+        ↓
+http://127.0.0.1:8787
+```
 
-- 推荐把仓库设置为 **Private**。
-- 只使用 GitHub Actions Secrets 保存 Cookie 和代理凭证。
-- 不要把真实 Cookie 填进源码。
-- 不要在 Issue 中上传包含 Cookie、邮箱或会话信息的完整截图。
-- 如果 Cookie 曾公开泄露，请立即使旧会话失效。
-- 定期查看 Actions 是否仍正常运行。
+HTTPS 正常后，把：
 
-更多说明见 [SECURITY.md](SECURITY.md)。
+```env
+WEB_SECURE_COOKIE=true
+```
+
+然后：
+
+```bash
+docker compose up -d
+```
+
+## 5. 第一次使用
+
+登录 Web 后台后：
+
+```text
+设置 → ACLClouds Cookie
+```
+
+粘贴 Network → Request Headers → Cookie 中的完整 Cookie 值，不要包含前面的 `Cookie:`。
+
+保存后 Cookie 使用 APP_SECRET 加密并存入：
+
+```text
+./data/aclkeep.db
+```
+
+约 5 分钟后做第一次验证，也可以手动点 **仅检查一次**。
+
+# 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---:|---|
+| APP_SECRET | 无 | 必填，Cookie 加密与 Flask Session 密钥 |
+| WEB_PASSWORD | 无 | 必填，Web 后台密码 |
+| INSTANCE_NAME | ACLClouds Keep | 实例显示名称 |
+| WEB_SECURE_COOKIE | false | HTTPS 后设 true |
+| TARGET_REMAINING_HOURS | 24 | 剩余多少小时进入续期阶段 |
+| RETRY_HOURS | 6 | 接近到期但未成功时重试间隔 |
+| BLOCKED_RETRY_HOURS | 24 | Cookie/人机验证异常冷却 |
+| SCHEDULER_TICK_MINUTES | 10 | 本地调度器检查频率，不访问 ACLClouds |
+| BIND_ADDRESS | 127.0.0.1 | Docker 端口绑定地址 |
+| HOST_PORT | 8787 | 宿主机管理端口 |
+| CONTAINER_NAME | aclclouds-keep | 容器名 |
+
+# 为什么默认 24 小时
+
+48 小时意味着正常大约每两天访问一次；24 小时正常大约每三天访问一次，同时还留一整天处理 Cookie 失效、页面变化或网络故障。
+
+6～12 小时虽然理论访问更少，但首次失败后处理空间太小，因此默认 24 小时更稳妥。
+
+# 数据与备份
+
+持久数据：
+
+```text
+./data/aclkeep.db
+```
+
+备份建议同时保存：
+
+```text
+.env
+data/
+```
+
+例如：
+
+```bash
+docker compose stop
+tar -czf aclkeep-backup.tar.gz .env data
+docker compose start
+```
+
+恢复数据库时必须保留原来的 APP_SECRET，否则加密 Cookie 无法解密。
+
+# 更新
+
+```bash
+cd /opt/ACLClouds-keep
+git pull
+docker compose up -d --build
+```
+
+# 排错
+
+```bash
+docker compose ps
+docker compose logs -f --tail=100 aclkeep
+curl http://127.0.0.1:8787/health
+```
+
+健康接口期望：
+
+```json
+{"ok":true,"instance":"ACLClouds Keep"}
+```
+
+# 安全
+
+- 一台服务器一个账号
+- 默认不暴露 8787 到公网
+- 推荐 1Panel + HTTPS
+- 使用强 WEB_PASSWORD
+- 不要提交 .env 或 Cookie
+- 遇到 CAPTCHA / 人机验证时不会自动绕过
+- GitHub CI 不访问 ACLClouds
+
+详见 [SECURITY.md](SECURITY.md)。
 
 ## License
 

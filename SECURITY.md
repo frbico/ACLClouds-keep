@@ -1,21 +1,14 @@
 # Security
 
-## Sensitive data
+Never commit ACLClouds Cookies, `.env`, `APP_SECRET`, `WEB_PASSWORD`, proxy credentials, or server credentials.
 
-Never commit ACLClouds cookies, session tokens, passwords, proxy credentials,
-or other account secrets to this repository.
+The management UI binds to `127.0.0.1` by default. Recommended production setup:
 
-Store runtime credentials only in GitHub Actions repository secrets:
+1. Keep `BIND_ADDRESS=127.0.0.1`.
+2. Use 1Panel/Nginx/Caddy as HTTPS reverse proxy.
+3. Set `WEB_SECURE_COOKIE=true` after HTTPS works.
+4. Use a strong `WEB_PASSWORD`.
 
-- `ACL_COOKIES_1`
-- `ACL_COOKIES_2`
-- `PROXY_URL` (optional)
+The stored ACLClouds Cookie is encrypted with `APP_SECRET`. If APP_SECRET changes, enter the Cookie again.
 
-If a cookie or credential is accidentally exposed, invalidate the old session
-or credential immediately and replace the corresponding GitHub secret.
-
-## Reports
-
-If you discover a security issue in this project, do not publish credentials
-or session data in a public issue. Remove sensitive data from logs and
-screenshots before sharing diagnostic information.
+This project does not attempt to bypass CAPTCHA, Cloudflare human verification, or other interactive verification pages. Application logs do not print Cookie values.

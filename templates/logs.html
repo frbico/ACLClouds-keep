@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>运行日志</h1>
+    <p class="muted">这里只记录状态，不记录 Cookie 内容。</p>
+  </div>
+</div>
+<section class="card">
+  <div class="events full-events">
+    {% for e in events %}
+      <div class="event">
+        <span class="dot {{ e.level }}"></span>
+        <time>{{ e.created_at|fmt_dt }}</time>
+        <span>{{ e.message }}</span>
+      </div>
+    {% else %}
+      <p class="muted">暂无日志。</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>设置</h1>
+    <p class="muted">推荐一台 Debian 服务器只配置一个 ACLClouds 账号，让每个账号固定从自己的服务器公网 IP 访问。</p>
+  </div>
+</div>
+
+<form method="post" class="card form-card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <label class="switch-row">
+    <span><b>自动检查 / 续期</b><small>关闭后仍可使用首页的手动按钮。</small></span>
+    <input type="checkbox" name="auto_enabled" {% if auto_enabled %}checked{% endif %}>
+  </label>
+
+  <label class="switch-row">
+    <span><b>离线时尝试 Start</b><small>默认关闭。只有页面明确显示 OFFLINE 且 Start 可用时才点击。</small></span>
+    <input type="checkbox" name="auto_start" {% if auto_start %}checked{% endif %}>
+  </label>
+
+  <div class="field">
+    <label>目标续期剩余时间（小时）</label>
+    <input type="number" min="8" max="40" name="target_remaining_hours" value="{{ target_remaining_hours }}">
+    <small>推荐 24。正常成功续期后通常约三天才需要再次访问 ACLClouds。</small>
+  </div>
+
+  <div class="field">
+    <label>失败重试间隔（小时）</label>
+    <input type="number" min="2" max="12" name="retry_hours" value="{{ retry_hours }}">
+    <small>推荐 6。只在接近到期但续期没有完成时使用。</small>
+  </div>
+
+  <div class="field">
+    <label>ACLClouds Cookie</label>
+    <textarea name="cookie" rows="6" placeholder="{% if cookie_configured %}Cookie 已配置。留空表示不修改。{% else %}粘贴完整 Cookie 请求头的值，例如 name=value; name2=value2{% endif %}"></textarea>
+    <small>Cookie 使用 APP_SECRET 加密后保存在 /data/aclkeep.db，不会显示在页面或运行日志中。</small>
+  </div>
+
+  <button class="primary" type="submit">保存设置</button>
+</form>
+{% endblock %}

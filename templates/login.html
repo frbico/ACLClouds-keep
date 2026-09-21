@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="login-card card">
+  <h1>登录</h1>
+  <p class="muted">这是服务器本地的 ACLClouds Keep 管理页。</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>管理密码</label>
+    <input type="password" name="password" autocomplete="current-password" required autofocus>
+    <button class="primary full" type="submit">进入管理页</button>
+  </form>
+</div>
+{% endblock %}
