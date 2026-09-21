@@ -10,7 +10,7 @@
 ## 功能
 
 - 支持两个账号：`ACL_COOKIES_1`、`ACL_COOKIES_2`
-- 每天自动检查两次，也支持手动运行
+- 每天自动检查一次，也支持手动运行
 - 自动遍历每个账号中的全部服务器
 - 检测到 `Renew / Renouveler / 续期` 后执行续期
 - 支持 `Renew now / Renouveler maintenant / 立即续期`
@@ -114,10 +114,9 @@ Configured ACLClouds accounts: 2
 
 ```yaml
 cron: "17 3 * * *"
-cron: "17 15 * * *"
 ```
 
-即每天 **UTC 03:17** 和 **UTC 15:17** 各检查一次。
+即每天 **UTC 03:17** 自动检查一次。
 
 GitHub Actions 的计划任务可能发生延迟，因此项目不会依赖到期前最后几分钟才执行。
 
