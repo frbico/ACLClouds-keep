@@ -1,13 +1,38 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="login-card card">
-  <h1>登录</h1>
-  <p class="muted">这是服务器本地的 ACLClouds Keep 管理页。</p>
-  <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>管理密码</label>
-    <input type="password" name="password" autocomplete="current-password" required autofocus>
-    <button class="primary full" type="submit">进入管理页</button>
-  </form>
-</div>
+<section class="login-stage">
+  <div class="login-visual">
+    <span class="eyebrow light">SELF-HOSTED CONTROL</span>
+    <h1>低频运行，<br>保持简单。</h1>
+    <p>ACLClouds-Keep 在你的服务器上运行，只在需要时访问 ACLClouds，并通过本地 Web 页面提供管理。</p>
+    <div class="login-points">
+      <span>✓ Docker ready</span>
+      <span>✓ Encrypted Cookie</span>
+      <span>✓ Adaptive schedule</span>
+    </div>
+  </div>
+
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="brand-mark">
+        <svg viewBox="0 0 32 32" fill="none">
+          <path d="M9.2 23.4h14.3a6 6 0 0 0 .7-11.9A8.2 8.2 0 0 0 8.8 9.8a6.8 6.8 0 0 0 .4 13.6Z" fill="currentColor"/>
+          <path d="m12.2 17 2.4 2.4 5.2-5.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span>ACLClouds-Keep</span>
+    </div>
+    <h2>欢迎回来</h2>
+    <p>输入安装时生成的管理密码。</p>
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field">
+        <label>管理密码</label>
+        <input type="password" name="password" autocomplete="current-password" placeholder="••••••••••••" required autofocus>
+      </div>
+      <button class="button button-primary button-large button-full" type="submit">进入控制台</button>
+    </form>
+  </div>
+</section>
 {% endblock %}
