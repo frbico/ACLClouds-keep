@@ -1,19 +1,33 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 - 2026-09-21
 
 ### Added
-- Public zero-auth one-line installer
-- Docker / Docker Compose deployment
+- Administrator username + password login
+- Administrator credential management in Settings
+- In-app GitHub version check
+- Website favicon
+- Version information in the health endpoint
+
+### Changed
+- Enlarged the three manual-action buttons
+- Rebalanced Chinese typography, heading sizes, spacing, and form text
+- Simplified README to root install / update / uninstall commands
+- Installer now bootstraps the default administrator username as `admin`
+
+### Removed
+- Deployment-specific documentation
+
+## 1.0.0 - 2026-09-21
+
+### Added
+- Public one-line Docker installer
 - Self-hosted Web management UI
 - Adaptive low-frequency renewal scheduling
 - Encrypted Cookie storage
-- 1Panel reverse-proxy deployment guide
-- Health checks and local event logs
+- Docker health checks and local event logs
 - CI-only GitHub Actions
-- Public contribution and issue templates
 
 ### Changed
-- Removed the old GitHub Hosted Runner renewal model
-- Default deployment now binds to `127.0.0.1:8787`
+- Replaced the old GitHub Hosted Runner renewal model with self-hosting
 - Renewal checks are based on remaining time instead of a fixed daily schedule
