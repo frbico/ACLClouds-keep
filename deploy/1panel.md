@@ -12,13 +12,13 @@
 Debian A / Public IP A
 ├── 1Panel
 ├── Docker
-└── ACLClouds Keep
+└── ACLClouds-Keep
     └── Account A
 
 Debian B / Public IP B
 ├── 1Panel
 ├── Docker
-└── ACLClouds Keep
+└── ACLClouds-Keep
     └── Account B
 ```
 
@@ -30,12 +30,6 @@ Debian B / Public IP B
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
-```
-
-自定义实例名：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash -s -- --instance Account-A
 ```
 
 脚本会自动完成：
@@ -205,7 +199,7 @@ curl http://127.0.0.1:8787/health
 正常：
 
 ```json
-{"ok":true,"instance":"ACLClouds Keep"}
+{"ok":true,"instance":"ACLClouds-Keep"}
 ```
 
 ---
