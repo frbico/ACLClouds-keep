@@ -1,20 +1,25 @@
-import hmac
 import os
+import re
 import threading
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from automation import run_check
 from crypto_utils import decrypt_text, encrypt_text
 from storage import add_event, get_bool, get_value, init_db, list_events, set_bool, set_value
 
 APP_SECRET = os.environ.get("APP_SECRET", "").strip()
-WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
+ENV_WEB_USERNAME = os.environ.get("WEB_USERNAME", "admin").strip() or "admin"
+ENV_WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
 INSTANCE_NAME = "ACLClouds-Keep"
 
 TARGET_REMAINING_HOURS = int(os.environ.get("TARGET_REMAINING_HOURS", "24"))
@@ -22,10 +27,11 @@ RETRY_HOURS = int(os.environ.get("RETRY_HOURS", "6"))
 BLOCKED_RETRY_HOURS = int(os.environ.get("BLOCKED_RETRY_HOURS", "24"))
 SCHEDULER_TICK_MINUTES = int(os.environ.get("SCHEDULER_TICK_MINUTES", "10"))
 
+VERSION_FILE = Path(__file__).with_name("VERSION")
+LATEST_VERSION_URL = "https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/VERSION"
+
 if len(APP_SECRET) < 24:
     raise RuntimeError("APP_SECRET is required and should be at least 24 characters.")
-if len(WEB_PASSWORD) < 8:
-    raise RuntimeError("WEB_PASSWORD is required and should be at least 8 characters.")
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
@@ -53,6 +59,16 @@ if get_value("target_remaining_hours", "") == "":
     set_value("target_remaining_hours", TARGET_REMAINING_HOURS)
 if get_value("retry_hours", "") == "":
     set_value("retry_hours", RETRY_HOURS)
+
+if get_value("admin_username", "") == "":
+    set_value("admin_username", ENV_WEB_USERNAME)
+
+if get_value("admin_password_hash", "") == "":
+    if len(ENV_WEB_PASSWORD) < 8:
+        raise RuntimeError(
+            "WEB_PASSWORD must be at least 8 characters for the first startup."
+        )
+    set_value("admin_password_hash", generate_password_hash(ENV_WEB_PASSWORD))
 
 
 def now_utc():
@@ -89,12 +105,55 @@ app.jinja_env.filters["fmt_dt"] = fmt_dt
 app.jinja_env.filters["fmt_remaining"] = fmt_remaining
 
 
+def read_current_version() -> str:
+    try:
+        version = VERSION_FILE.read_text(encoding="utf-8").strip()
+        return version or "dev"
+    except Exception:
+        return "dev"
+
+
+def version_tuple(version: str):
+    match = re.match(r"^\\s*v?(\\d+)\\.(\\d+)\\.(\\d+)", version or "")
+    if not match:
+        return (0, 0, 0)
+    return tuple(int(part) for part in match.groups())
+
+
+def fetch_latest_version() -> str:
+    req = urllib.request.Request(
+        LATEST_VERSION_URL,
+        headers={"User-Agent": "ACLClouds-Keep-update-check"},
+    )
+    with urllib.request.urlopen(req, timeout=6) as response:
+        latest = response.read(64).decode("utf-8", "replace").strip()
+
+    if not re.match(r"^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", latest):
+        raise ValueError("GitHub returned an invalid VERSION value.")
+    return latest
+
+
+def get_admin_username() -> str:
+    return get_value("admin_username", ENV_WEB_USERNAME).strip() or "admin"
+
+
+def verify_admin_password(password: str) -> bool:
+    stored_hash = get_value("admin_password_hash", "")
+    if not stored_hash:
+        return False
+    try:
+        return check_password_hash(stored_hash, password)
+    except Exception:
+        return False
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         if not session.get("authenticated"):
             return redirect(url_for("login", next=request.path))
         return fn(*args, **kwargs)
+
     return wrapper
 
 
@@ -129,7 +188,9 @@ def perform(action: str, source: str = "manual"):
             return False, "Cookie is not configured."
 
         cached_url = get_value("project_url", "") or None
-        target_hours = int(get_value("target_remaining_hours", str(TARGET_REMAINING_HOURS)))
+        target_hours = int(
+            get_value("target_remaining_hours", str(TARGET_REMAINING_HOURS))
+        )
         retry_hours = int(get_value("retry_hours", str(RETRY_HOURS)))
         auto_start = get_bool("auto_start", False)
 
@@ -155,9 +216,11 @@ def perform(action: str, source: str = "manual"):
             set_value("remaining_minutes", result.remaining_minutes)
 
         if not result.ok:
-            cooldown = BLOCKED_RETRY_HOURS if result.status in {
-                "cookie_expired", "cookie_invalid", "blocked"
-            } else retry_hours
+            cooldown = (
+                BLOCKED_RETRY_HOURS
+                if result.status in {"cookie_expired", "cookie_invalid", "blocked"}
+                else retry_hours
+            )
             set_next_check(now_utc() + timedelta(hours=cooldown))
             add_event("error", f"{result.status}: {result.message}")
             return False, result.message
@@ -178,7 +241,11 @@ def perform(action: str, source: str = "manual"):
         remaining = result.remaining_minutes
         if result.renewed and not result.renewal_verified:
             next_dt = now_utc() + timedelta(hours=retry_hours)
-        elif remaining is not None and remaining <= target_hours * 60 and not result.renewed:
+        elif (
+            remaining is not None
+            and remaining <= target_hours * 60
+            and not result.renewed
+        ):
             next_dt = now_utc() + timedelta(hours=retry_hours)
         elif remaining is not None:
             next_dt = schedule_from_remaining(remaining, target_hours)
@@ -224,19 +291,31 @@ scheduler.start()
 
 @app.route("/health")
 def health():
-    return {"ok": True, "instance": INSTANCE_NAME}
+    return {
+        "ok": True,
+        "instance": INSTANCE_NAME,
+        "version": read_current_version(),
+    }
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if session.get("authenticated"):
+        return redirect(url_for("index"))
+
     if request.method == "POST":
-        supplied = request.form.get("password", "")
-        if hmac.compare_digest(supplied, WEB_PASSWORD):
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        if username == get_admin_username() and verify_admin_password(password):
             session.clear()
             session["authenticated"] = True
+            session["admin_username"] = username
             session.permanent = True
             return redirect(url_for("index"))
-        flash("密码不正确。", "error")
+
+        flash("管理员账号或密码不正确。", "error")
+
     return render_template("login.html", instance_name=INSTANCE_NAME)
 
 
@@ -261,7 +340,9 @@ def index():
         "last_status": get_value("last_status", "never"),
         "last_message": get_value("last_message", ""),
         "project_url": get_value("project_url", ""),
-        "target_remaining_hours": get_value("target_remaining_hours", str(TARGET_REMAINING_HOURS)),
+        "target_remaining_hours": get_value(
+            "target_remaining_hours", str(TARGET_REMAINING_HOURS)
+        ),
         "retry_hours": get_value("retry_hours", str(RETRY_HOURS)),
     }
     return render_template(
@@ -275,17 +356,62 @@ def index():
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
 def settings():
-    if request.method == "POST":
-        set_bool("auto_enabled", bool(request.form.get("auto_enabled")))
-        set_bool("auto_start", bool(request.form.get("auto_start")))
+    current_username = get_admin_username()
 
+    if request.method == "POST":
         try:
-            target = min(40, max(8, int(request.form.get("target_remaining_hours", "24"))))
-            retry = min(12, max(2, int(request.form.get("retry_hours", "6"))))
+            target = min(
+                40,
+                max(
+                    8,
+                    int(request.form.get("target_remaining_hours", "24")),
+                ),
+            )
+            retry = min(
+                12,
+                max(
+                    2,
+                    int(request.form.get("retry_hours", "6")),
+                ),
+            )
         except ValueError:
             flash("时间参数必须是数字。", "error")
             return redirect(url_for("settings"))
 
+        requested_username = request.form.get("admin_username", "").strip()
+        current_password = request.form.get("current_admin_password", "")
+        new_password = request.form.get("new_admin_password", "")
+        confirm_password = request.form.get("confirm_admin_password", "")
+
+        if not requested_username:
+            flash("管理员账号不能为空。", "error")
+            return redirect(url_for("settings"))
+
+        if len(requested_username) > 64:
+            flash("管理员账号不能超过 64 个字符。", "error")
+            return redirect(url_for("settings"))
+
+        credentials_changed = (
+            requested_username != current_username
+            or bool(new_password)
+            or bool(confirm_password)
+        )
+
+        if credentials_changed:
+            if not current_password or not verify_admin_password(current_password):
+                flash("修改管理员账号或密码前，请输入当前管理员密码。", "error")
+                return redirect(url_for("settings"))
+
+            if new_password or confirm_password:
+                if len(new_password) < 8:
+                    flash("新管理员密码至少需要 8 个字符。", "error")
+                    return redirect(url_for("settings"))
+                if new_password != confirm_password:
+                    flash("两次输入的新密码不一致。", "error")
+                    return redirect(url_for("settings"))
+
+        set_bool("auto_enabled", bool(request.form.get("auto_enabled")))
+        set_bool("auto_start", bool(request.form.get("auto_start")))
         set_value("target_remaining_hours", target)
         set_value("retry_hours", retry)
 
@@ -296,6 +422,16 @@ def settings():
             set_value("last_status", "cookie_updated")
             add_event("info", "Cookie was updated from the web UI.")
 
+        if credentials_changed:
+            set_value("admin_username", requested_username)
+            if new_password:
+                set_value(
+                    "admin_password_hash",
+                    generate_password_hash(new_password),
+                )
+            session["admin_username"] = requested_username
+            add_event("info", "Administrator credentials were updated.")
+
         flash("设置已保存。", "success")
         return redirect(url_for("settings"))
 
@@ -305,9 +441,48 @@ def settings():
         auto_enabled=get_bool("auto_enabled", True),
         auto_start=get_bool("auto_start", False),
         cookie_configured=bool(get_value("cookie_enc", "")),
-        target_remaining_hours=get_value("target_remaining_hours", str(TARGET_REMAINING_HOURS)),
+        target_remaining_hours=get_value(
+            "target_remaining_hours", str(TARGET_REMAINING_HOURS)
+        ),
         retry_hours=get_value("retry_hours", str(RETRY_HOURS)),
+        admin_username=current_username,
+        current_version=read_current_version(),
+        latest_version=get_value("latest_version", ""),
+        update_available=get_bool("update_available", False),
+        last_update_check_at=get_value("last_update_check_at", ""),
     )
+
+
+@app.post("/action/check-update")
+@login_required
+def action_check_update():
+    current = read_current_version()
+
+    try:
+        latest = fetch_latest_version()
+        available = version_tuple(latest) > version_tuple(current)
+
+        set_value("latest_version", latest)
+        set_bool("update_available", available)
+        set_value("last_update_check_at", now_utc().isoformat())
+
+        if available:
+            flash(
+                f"发现新版本：v{latest}。当前版本为 v{current}。",
+                "success",
+            )
+        else:
+            flash(f"已是最新版：v{current}。", "success")
+
+        add_event(
+            "info",
+            f"Update check completed: current={current}, latest={latest}.",
+        )
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        flash(f"检查更新失败：{exc}", "error")
+        add_event("warning", f"Update check failed: {exc}")
+
+    return redirect(url_for("settings"))
 
 
 @app.post("/action/check")
@@ -337,4 +512,8 @@ def action_renew():
 @app.route("/logs")
 @login_required
 def logs():
-    return render_template("logs.html", instance_name=INSTANCE_NAME, events=list_events(150))
+    return render_template(
+        "logs.html",
+        instance_name=INSTANCE_NAME,
+        events=list_events(150),
+    )
