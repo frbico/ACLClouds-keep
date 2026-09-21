@@ -21,7 +21,9 @@ jobs:
           python-version: "3.12"
 
       - name: Syntax check
-        run: python -m py_compile app.py automation.py storage.py crypto_utils.py
+        run: |
+          python -m py_compile app.py automation.py storage.py crypto_utils.py
+          bash -n install.sh
 
       - name: Validate Compose
         run: |
