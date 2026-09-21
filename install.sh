@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_NAME="ACLClouds-keep"
 REPO_HTTPS="https://github.com/frbico/ACLClouds-keep.git"
 DEFAULT_INSTALL_DIR="/opt/ACLClouds-keep"
 
@@ -13,12 +12,12 @@ die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 HOST_PORT_ARG="${HOST_PORT:-}"
 BIND_ADDRESS_ARG="${BIND_ADDRESS:-}"
-DO_UPDATE=0
 ALLOW_DOCKER_INSTALL=1
 GENERATED_PASSWORD=0
+PROJECT_DIR=""
 
 usage() {
-  cat <<'EOF'
+  cat <<'EOF_HELP'
 ACLClouds-Keep - one-click installer
 
 Usage:
@@ -28,13 +27,13 @@ Usage:
   # Normal sudo user:
   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
 
+  # Local file:
   sudo bash install.sh [options]
 
 Options:
   --port PORT           Host port (default: 8787)
   --bind ADDRESS        Bind address (default: 127.0.0.1)
   --install-dir PATH    Installation directory (default: /opt/ACLClouds-keep)
-  --update              Pull latest code before rebuilding
   --no-docker-install   Fail instead of installing Docker automatically
   -h, --help            Show this help
 
@@ -44,7 +43,7 @@ Environment overrides:
   HOST_PORT
   BIND_ADDRESS
   INSTALL_DIR
-EOF
+EOF_HELP
 }
 
 while [[ $# -gt 0 ]]; do
@@ -64,10 +63,6 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="$2"
       shift 2
       ;;
-    --update)
-      DO_UPDATE=1
-      shift
-      ;;
     --no-docker-install)
       ALLOW_DOCKER_INSTALL=0
       shift
@@ -82,13 +77,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "${EUID}" -eq 0 ]] || die "Run as root, e.g. sudo bash install.sh or curl ... | sudo bash"
+[[ "${EUID}" -eq 0 ]] || die "Run as root (or pipe to sudo bash)."
 
 export DEBIAN_FRONTEND=noninteractive
 
 ensure_base_tools() {
   local missing=()
   local cmd
+
   for cmd in curl git openssl; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
@@ -104,13 +100,12 @@ ensure_base_tools() {
 ensure_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     ok "Docker + Compose v2 detected."
-    return
+    return 0
   fi
 
-  [[ "$ALLOW_DOCKER_INSTALL" -eq 1 ]] || die "Docker/Compose not found and --no-docker-install was supplied."
+  [[ "$ALLOW_DOCKER_INSTALL" -eq 1 ]] || die "Docker/Compose not found and automatic installation is disabled."
 
-  command -v curl >/dev/null 2>&1 || die "curl is required to install Docker."
-  log "Docker/Compose not found. Installing Docker Engine using Docker's convenience script..."
+  log "Installing Docker Engine + Compose v2..."
   curl -fsSL https://get.docker.com -o /tmp/aclkeep-get-docker.sh
   sh /tmp/aclkeep-get-docker.sh
   rm -f /tmp/aclkeep-get-docker.sh
@@ -119,6 +114,7 @@ ensure_docker() {
     systemctl enable --now docker >/dev/null 2>&1 || true
   fi
 
+  command -v docker >/dev/null 2>&1 || die "Docker installation failed."
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is unavailable after installation."
   ok "Docker installed."
 }
@@ -129,36 +125,46 @@ validate_inputs() {
   (( port >= 1 && port <= 65535 )) || die "Port must be between 1 and 65535."
 }
 
-find_or_clone_project() {
+prepare_project() {
   local script_source="${BASH_SOURCE[0]:-}"
   local script_dir=""
 
   if [[ -n "$script_source" && -f "$script_source" ]]; then
     script_dir="$(cd "$(dirname "$script_source")" && pwd)"
     if [[ -f "$script_dir/docker-compose.yml" && -f "$script_dir/app.py" ]]; then
-      printf '%s\n' "$script_dir"
-      return
+      PROJECT_DIR="$script_dir"
     fi
   fi
 
-  if [[ -d "$INSTALL_DIR/.git" ]]; then
-    printf '%s\n' "$INSTALL_DIR"
-    return
+  if [[ -z "$PROJECT_DIR" ]]; then
+    if [[ -d "$INSTALL_DIR/.git" ]]; then
+      PROJECT_DIR="$INSTALL_DIR"
+    elif [[ -e "$INSTALL_DIR" ]]; then
+      die "$INSTALL_DIR already exists but is not a Git checkout. Remove it first or use --install-dir PATH."
+    else
+      log "Cloning public repository to $INSTALL_DIR..."
+      git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR"
+      PROJECT_DIR="$INSTALL_DIR"
+    fi
   fi
 
-  if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR/.git" ]]; then
-    die "$INSTALL_DIR already exists but is not this Git repository. Choose --install-dir PATH."
+  [[ -d "$PROJECT_DIR" ]] || die "Project directory not found: $PROJECT_DIR"
+  cd "$PROJECT_DIR"
+
+  if [[ -d .git ]]; then
+    log "Syncing latest source..."
+    git fetch --depth 1 origin main
+    git reset --hard origin/main
   fi
 
-  log "Cloning public repository to $INSTALL_DIR..." >&2
-  git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR" >&2
-  printf '%s\n' "$INSTALL_DIR"
+  [[ -f docker-compose.yml && -f app.py ]] || die "Project files are incomplete in $PROJECT_DIR"
 }
 
 set_env_value() {
   local file="$1" key="$2" value="$3"
   local escaped
   escaped="$(printf '%s' "$value" | sed 's/[&|]/\\&/g')"
+
   if grep -qE "^${key}=" "$file"; then
     sed -i "s|^${key}=.*|${key}=${escaped}|" "$file"
   else
@@ -172,8 +178,7 @@ ensure_env_key() {
 }
 
 create_or_update_env() {
-  local dir="$1"
-  local env_file="$dir/.env"
+  local env_file="$PROJECT_DIR/.env"
 
   if [[ ! -f "$env_file" ]]; then
     log "Creating .env with secure defaults..."
@@ -184,7 +189,7 @@ create_or_update_env() {
     port="${HOST_PORT_ARG:-8787}"
     bind="${BIND_ADDRESS_ARG:-127.0.0.1}"
 
-    cat > "$env_file" <<EOF
+    cat > "$env_file" <<EOF_ENV
 APP_SECRET=$secret
 WEB_PASSWORD=$password
 WEB_SECURE_COOKIE=false
@@ -195,7 +200,8 @@ SCHEDULER_TICK_MINUTES=10
 BIND_ADDRESS=$bind
 HOST_PORT=$port
 CONTAINER_NAME=aclclouds-keep
-EOF
+EOF_ENV
+
     chmod 600 "$env_file"
     GENERATED_PASSWORD=1
   else
@@ -213,206 +219,21 @@ EOF
     if [[ -n "$HOST_PORT_ARG" ]]; then
       set_env_value "$env_file" "HOST_PORT" "$HOST_PORT_ARG"
     fi
+
     if [[ -n "$BIND_ADDRESS_ARG" ]]; then
       set_env_value "$env_file" "BIND_ADDRESS" "$BIND_ADDRESS_ARG"
     fi
   fi
 
-  # Older installs may have an incomplete .env. Make required values self-healing.
-  if ! grep -qE '^APP_SECRET=.{24,}
-
-read_env_value() {
-  local file="$1" key="$2"
-  grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
-}
-
-wait_for_health() {
-  local port="$1"
-  local i
-  log "Waiting for the Web UI health check..."
-
-  for i in $(seq 1 45); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      ok "Web service is healthy."
-      return 0
-    fi
-    sleep 2
-  done
-
-  warn "Health endpoint did not become ready within 90 seconds."
-  return 1
-}
-
-main() {
-  ensure_base_tools
-  ensure_docker
-  validate_inputs
-
-  local dir
-  dir="$(find_or_clone_project)"
-  [[ -d "$dir" ]] || die "Resolved project directory does not exist: $dir"
-  cd "$dir"
-
-  if [[ -d .git ]]; then
-    log "Syncing latest source..."
-    git fetch --depth 1 origin main
-    git reset --hard origin/main
-  fi
-
-  create_or_update_env "$dir"
-  mkdir -p "$dir/data"
-  chmod 700 "$dir/data" 2>/dev/null || true
-
-  local port bind password
-  port="$(read_env_value "$dir/.env" HOST_PORT)"
-  bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
-  password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
-
-  log "Building and starting ACLClouds-Keep..."
-  docker compose up -d --build
-
-  wait_for_health "$port" || {
-    echo
-    warn "Container did not pass the health check. Recent logs:"
-    docker compose logs --tail=80 aclkeep || true
-  }
-
-  echo
-  echo "============================================================"
-  echo " ACLClouds-Keep installed"
-  echo "============================================================"
-  echo " Install dir:   $dir"
-  echo " Local URL:     http://127.0.0.1:$port"
-  echo " Published on:  $bind:$port"
-  echo
-  echo " 1Panel / Nginx reverse proxy target:"
-  echo "   http://127.0.0.1:$port"
-  echo
-  if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
-    echo " Web admin password:"
-    echo "   $password"
-    echo
-    echo " Save this password now. It is stored in $dir/.env"
-  else
-    echo " Existing Web admin password was preserved."
-  fi
-  echo
-  echo " After HTTPS reverse proxy works, enable Secure cookies:"
-  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
-  echo
-  echo " Update later:"
-  echo "   cd '$dir' && sudo bash install.sh --update"
-  echo
-  echo " Status:"
-  echo "   cd '$dir' && docker compose ps"
-  echo
-  echo " Logs:"
-  echo "   cd '$dir' && docker compose logs -f --tail=100 aclkeep"
-  echo "============================================================"
-}
-
-main
- "$env_file"; then
+  if ! grep -qE '^APP_SECRET=.{24,}$' "$env_file"; then
     set_env_value "$env_file" "APP_SECRET" "$(openssl rand -hex 32)"
-    warn "APP_SECRET was missing/invalid and has been regenerated."
+    warn "APP_SECRET was missing or invalid and has been regenerated."
   fi
 
-  if ! grep -qE '^WEB_PASSWORD=.{8,}
-
-read_env_value() {
-  local file="$1" key="$2"
-  grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
-}
-
-wait_for_health() {
-  local port="$1"
-  local i
-  log "Waiting for the Web UI health check..."
-
-  for i in $(seq 1 45); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-      ok "Web service is healthy."
-      return 0
-    fi
-    sleep 2
-  done
-
-  warn "Health endpoint did not become ready within 90 seconds."
-  return 1
-}
-
-main() {
-  ensure_base_tools
-  ensure_docker
-  validate_inputs
-
-  local dir
-  dir="$(find_or_clone_project)"
-  cd "$dir"
-
-  if [[ "$DO_UPDATE" -eq 1 && -d .git ]]; then
-    log "Updating source..."
-    git fetch --depth 1 origin main
-    git reset --hard origin/main
-  fi
-
-  create_or_update_env "$dir"
-  mkdir -p "$dir/data"
-  chmod 700 "$dir/data" 2>/dev/null || true
-
-  local port bind password
-  port="$(read_env_value "$dir/.env" HOST_PORT)"
-  bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
-  password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
-
-  log "Building and starting ACLClouds-Keep..."
-  docker compose up -d --build
-
-  wait_for_health "$port" || {
-    echo
-    warn "Container did not pass the health check. Recent logs:"
-    docker compose logs --tail=80 aclkeep || true
-  }
-
-  echo
-  echo "============================================================"
-  echo " ACLClouds-Keep installed"
-  echo "============================================================"
-  echo " Install dir:   $dir"
-  echo " Local URL:     http://127.0.0.1:$port"
-  echo " Published on:  $bind:$port"
-  echo
-  echo " 1Panel / Nginx reverse proxy target:"
-  echo "   http://127.0.0.1:$port"
-  echo
-  if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
-    echo " Web admin password:"
-    echo "   $password"
-    echo
-    echo " Save this password now. It is stored in $dir/.env"
-  else
-    echo " Existing Web admin password was preserved."
-  fi
-  echo
-  echo " After HTTPS reverse proxy works, enable Secure cookies:"
-  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
-  echo
-  echo " Update later:"
-  echo "   cd '$dir' && sudo bash install.sh --update"
-  echo
-  echo " Status:"
-  echo "   cd '$dir' && docker compose ps"
-  echo
-  echo " Logs:"
-  echo "   cd '$dir' && docker compose logs -f --tail=100 aclkeep"
-  echo "============================================================"
-}
-
-main
- "$env_file"; then
+  if ! grep -qE '^WEB_PASSWORD=.{8,}$' "$env_file"; then
     set_env_value "$env_file" "WEB_PASSWORD" "$(openssl rand -hex 12)"
     GENERATED_PASSWORD=1
-    warn "WEB_PASSWORD was missing/invalid and has been regenerated."
+    warn "WEB_PASSWORD was missing or invalid and has been regenerated."
   fi
 
   return 0
@@ -426,6 +247,7 @@ read_env_value() {
 wait_for_health() {
   local port="$1"
   local i
+
   log "Waiting for the Web UI health check..."
 
   for i in $(seq 1 45); do
@@ -444,25 +266,18 @@ main() {
   ensure_base_tools
   ensure_docker
   validate_inputs
+  prepare_project
+  create_or_update_env
 
-  local dir
-  dir="$(find_or_clone_project)"
-  cd "$dir"
+  mkdir -p "$PROJECT_DIR/data"
+  chmod 700 "$PROJECT_DIR/data" 2>/dev/null || true
 
-  if [[ "$DO_UPDATE" -eq 1 && -d .git ]]; then
-    log "Updating source..."
-    git fetch --depth 1 origin main
-    git reset --hard origin/main
-  fi
-
-  create_or_update_env "$dir"
-  mkdir -p "$dir/data"
-  chmod 700 "$dir/data" 2>/dev/null || true
-
+  local env_file="$PROJECT_DIR/.env"
   local port bind password
-  port="$(read_env_value "$dir/.env" HOST_PORT)"
-  bind="$(read_env_value "$dir/.env" BIND_ADDRESS)"
-  password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
+
+  port="$(read_env_value "$env_file" HOST_PORT)"
+  bind="$(read_env_value "$env_file" BIND_ADDRESS)"
+  password="$(read_env_value "$env_file" WEB_PASSWORD)"
 
   log "Building and starting ACLClouds-Keep..."
   docker compose up -d --build
@@ -477,34 +292,36 @@ main() {
   echo "============================================================"
   echo " ACLClouds-Keep installed"
   echo "============================================================"
-  echo " Install dir:   $dir"
+  echo " Install dir:   $PROJECT_DIR"
   echo " Local URL:     http://127.0.0.1:$port"
   echo " Published on:  $bind:$port"
   echo
   echo " 1Panel / Nginx reverse proxy target:"
   echo "   http://127.0.0.1:$port"
   echo
+
   if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
     echo " Web admin password:"
     echo "   $password"
     echo
-    echo " Save this password now. It is stored in $dir/.env"
+    echo " Save this password now. It is stored in $env_file"
   else
     echo " Existing Web admin password was preserved."
   fi
+
   echo
   echo " After HTTPS reverse proxy works, enable Secure cookies:"
-  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
+  echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$env_file' && cd '$PROJECT_DIR' && docker compose up -d"
   echo
   echo " Update later:"
-  echo "   cd '$dir' && sudo bash install.sh --update"
+  echo "   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash"
   echo
   echo " Status:"
-  echo "   cd '$dir' && docker compose ps"
+  echo "   cd '$PROJECT_DIR' && docker compose ps"
   echo
   echo " Logs:"
-  echo "   cd '$dir' && docker compose logs -f --tail=100 aclkeep"
+  echo "   cd '$PROJECT_DIR' && docker compose logs -f --tail=100 aclkeep"
   echo "============================================================"
 }
 
-main
+main "$@"
