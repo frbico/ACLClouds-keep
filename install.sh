@@ -150,8 +150,8 @@ find_or_clone_project() {
     die "$INSTALL_DIR already exists but is not this Git repository. Choose --install-dir PATH."
   fi
 
-  log "Cloning public repository to $INSTALL_DIR..."
-  git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR"
+  log "Cloning public repository to $INSTALL_DIR..." >&2
+  git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR" >&2
   printf '%s\n' "$INSTALL_DIR"
 }
 
@@ -250,6 +250,7 @@ main() {
 
   local dir
   dir="$(find_or_clone_project)"
+  [[ -d "$dir" ]] || die "Resolved project directory does not exist: $dir"
   cd "$dir"
 
   if [[ -d .git ]]; then
