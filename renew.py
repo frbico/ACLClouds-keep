@@ -9,7 +9,7 @@ from typing import Optional
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
 
-DASHBOARD_URL = "https://dash.aclclouds.com/projects"
+DASHBOARD_URL = "https://aclclouds.com/dashboard"
 SCREENSHOT_DIR = Path("screenshots")
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
@@ -58,7 +58,7 @@ def parse_cookie_secret(raw: str):
             cookie = {
                 "name": str(item["name"]),
                 "value": str(item["value"]),
-                "domain": item.get("domain") or "dash.aclclouds.com",
+                "domain": item.get("domain") or "aclclouds.com",
                 "path": item.get("path") or "/",
             }
 
@@ -82,7 +82,7 @@ def parse_cookie_secret(raw: str):
             {
                 "name": name.strip(),
                 "value": value.strip(),
-                "domain": "dash.aclclouds.com",
+                "domain": "aclclouds.com",
                 "path": "/",
             }
         )
@@ -324,7 +324,7 @@ def run_account(browser, account_no: int, cookie_secret: str) -> bool:
         account_ok = True
 
         for idx, href in enumerate(hrefs, start=1):
-            url = href if href.startswith("http") else f"https://dash.aclclouds.com{href}"
+            url = href if href.startswith("http") else f"https://aclclouds.com{href}"
             log(f"\n  --- Server {idx}/{len(hrefs)} ---")
 
             try:
