@@ -22,7 +22,12 @@ usage() {
 ACLClouds-Keep - one-click installer
 
 Usage:
+  # Already root:
+  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
+
+  # Normal sudo user:
   curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
+
   sudo bash install.sh [options]
 
 Options:
