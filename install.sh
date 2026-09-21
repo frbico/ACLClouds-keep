@@ -2,60 +2,77 @@
 set -Eeuo pipefail
 
 PROJECT_NAME="ACLClouds-keep"
+REPO_HTTPS="https://github.com/frbico/ACLClouds-keep.git"
 DEFAULT_INSTALL_DIR="/opt/ACLClouds-keep"
-DEFAULT_REPO_SSH="git@github.com:frbico/ACLClouds-keep.git"
 
-log() { printf '\033[1;34m[ACLKeep]\033[0m %s\n' "$*"; }
-ok()  { printf '\033[1;32m[OK]\033[0m %s\n' "$*"; }
-warn(){ printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+log()  { printf '\033[1;34m[ACLKeep]\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m[OK]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
-INSTANCE_NAME_ARG=""
-HOST_PORT_ARG=""
-BIND_ADDRESS_ARG=""
+INSTANCE_NAME_ARG="${INSTANCE_NAME:-}"
+HOST_PORT_ARG="${HOST_PORT:-}"
+BIND_ADDRESS_ARG="${BIND_ADDRESS:-}"
 DO_UPDATE=0
+ALLOW_DOCKER_INSTALL=1
 GENERATED_PASSWORD=0
 
 usage() {
   cat <<'EOF'
-ACLClouds Keep one-click installer
+ACLClouds Keep - one-click installer
 
 Usage:
+  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | sudo bash
   sudo bash install.sh [options]
 
 Options:
-  --instance NAME     Web UI instance name
-  --port PORT         Host port, default 8787
-  --bind ADDRESS      Bind address, default 127.0.0.1
-  --update            git pull --ff-only before rebuilding
-  -h, --help          Show this help
+  --instance NAME       Web UI instance name
+  --port PORT           Host port (default: 8787)
+  --bind ADDRESS        Bind address (default: 127.0.0.1)
+  --install-dir PATH    Installation directory (default: /opt/ACLClouds-keep)
+  --update              Pull latest code before rebuilding
+  --no-docker-install   Fail instead of installing Docker automatically
+  -h, --help            Show this help
 
 Environment overrides:
+  APP_SECRET
+  WEB_PASSWORD
   INSTANCE_NAME
   HOST_PORT
   BIND_ADDRESS
-  WEB_PASSWORD
-  APP_SECRET
+  INSTALL_DIR
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --instance)
-      INSTANCE_NAME_ARG="${2:-}"
+      [[ $# -ge 2 ]] || die "--instance requires a value"
+      INSTANCE_NAME_ARG="$2"
       shift 2
       ;;
     --port)
-      HOST_PORT_ARG="${2:-}"
+      [[ $# -ge 2 ]] || die "--port requires a value"
+      HOST_PORT_ARG="$2"
       shift 2
       ;;
     --bind)
-      BIND_ADDRESS_ARG="${2:-}"
+      [[ $# -ge 2 ]] || die "--bind requires a value"
+      BIND_ADDRESS_ARG="$2"
+      shift 2
+      ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || die "--install-dir requires a value"
+      INSTALL_DIR="$2"
       shift 2
       ;;
     --update)
       DO_UPDATE=1
+      shift
+      ;;
+    --no-docker-install)
+      ALLOW_DOCKER_INSTALL=0
       shift
       ;;
     -h|--help)
@@ -68,24 +85,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${EUID}" -ne 0 ]]; then
-  if command -v sudo >/dev/null 2>&1; then
-    exec sudo -E bash "$0" "$@"
-  fi
-  die "Please run as root: sudo bash install.sh"
-fi
+[[ "${EUID}" -eq 0 ]] || die "Run as root, e.g. sudo bash install.sh or curl ... | sudo bash"
 
 export DEBIAN_FRONTEND=noninteractive
 
 ensure_base_tools() {
-  local missing=0
+  local missing=()
+  local cmd
   for cmd in curl git openssl; do
-    command -v "$cmd" >/dev/null 2>&1 || missing=1
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
-  if [[ "$missing" -eq 1 ]]; then
-    command -v apt-get >/dev/null 2>&1 || die "apt-get not found. This installer targets Debian/Ubuntu."
-    log "Installing base packages..."
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    command -v apt-get >/dev/null 2>&1 || die "Missing tools: ${missing[*]}. Install them manually."
+    log "Installing base packages: ${missing[*]}..."
     apt-get update -y
     apt-get install -y ca-certificates curl git openssl
   fi
@@ -93,44 +106,55 @@ ensure_base_tools() {
 
 ensure_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    ok "Docker + Compose already available."
+    ok "Docker + Compose v2 detected."
     return
   fi
 
-  log "Docker not found; installing Docker Engine..."
-  curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-  sh /tmp/get-docker.sh
-  rm -f /tmp/get-docker.sh
+  [[ "$ALLOW_DOCKER_INSTALL" -eq 1 ]] || die "Docker/Compose not found and --no-docker-install was supplied."
+
+  command -v curl >/dev/null 2>&1 || die "curl is required to install Docker."
+  log "Docker/Compose not found. Installing Docker Engine using Docker's convenience script..."
+  curl -fsSL https://get.docker.com -o /tmp/aclkeep-get-docker.sh
+  sh /tmp/aclkeep-get-docker.sh
+  rm -f /tmp/aclkeep-get-docker.sh
 
   if command -v systemctl >/dev/null 2>&1; then
     systemctl enable --now docker >/dev/null 2>&1 || true
   fi
 
-  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is still unavailable after installation."
+  docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is unavailable after installation."
   ok "Docker installed."
 }
 
-project_dir() {
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+validate_inputs() {
+  local port="${HOST_PORT_ARG:-8787}"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "Port must be numeric."
+  (( port >= 1 && port <= 65535 )) || die "Port must be between 1 and 65535."
+}
 
-  if [[ -f "$script_dir/docker-compose.yml" && -f "$script_dir/app.py" ]]; then
-    printf '%s\n' "$script_dir"
-    return
+find_or_clone_project() {
+  local script_source="${BASH_SOURCE[0]:-}"
+  local script_dir=""
+
+  if [[ -n "$script_source" && -f "$script_source" ]]; then
+    script_dir="$(cd "$(dirname "$script_source")" && pwd)"
+    if [[ -f "$script_dir/docker-compose.yml" && -f "$script_dir/app.py" ]]; then
+      printf '%s\n' "$script_dir"
+      return
+    fi
   fi
-
-  ensure_base_tools
 
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     printf '%s\n' "$INSTALL_DIR"
     return
   fi
 
-  log "Project files are not present locally; cloning the repository..."
-  log "Private repository access requires an SSH Deploy Key / GitHub SSH authentication."
-  git clone "${REPO_URL:-$DEFAULT_REPO_SSH}" "$INSTALL_DIR" || {
-    die "Git clone failed. Because this repository is private, configure an SSH Deploy Key first, or clone it with 1Panel/GitHub authentication and then run: sudo bash install.sh"
-  }
+  if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR/.git" ]]; then
+    die "$INSTALL_DIR already exists but is not this Git repository. Choose --install-dir PATH."
+  fi
+
+  log "Cloning public repository to $INSTALL_DIR..."
+  git clone --depth 1 "$REPO_HTTPS" "$INSTALL_DIR"
   printf '%s\n' "$INSTALL_DIR"
 }
 
@@ -145,6 +169,11 @@ set_env_value() {
   fi
 }
 
+ensure_env_key() {
+  local file="$1" key="$2" value="$3"
+  grep -qE "^${key}=" "$file" || printf '%s=%s\n' "$key" "$value" >> "$file"
+}
+
 create_or_update_env() {
   local dir="$1"
   local env_file="$dir/.env"
@@ -155,9 +184,9 @@ create_or_update_env() {
     local secret password instance port bind
     secret="${APP_SECRET:-$(openssl rand -hex 32)}"
     password="${WEB_PASSWORD:-$(openssl rand -hex 12)}"
-    instance="${INSTANCE_NAME_ARG:-${INSTANCE_NAME:-ACLClouds-Keep-$(hostname -s)}}"
-    port="${HOST_PORT_ARG:-${HOST_PORT:-8787}}"
-    bind="${BIND_ADDRESS_ARG:-${BIND_ADDRESS:-127.0.0.1}}"
+    instance="${INSTANCE_NAME_ARG:-ACLClouds-Keep-$(hostname -s)}"
+    port="${HOST_PORT_ARG:-8787}"
+    bind="${BIND_ADDRESS_ARG:-127.0.0.1}"
 
     cat > "$env_file" <<EOF
 APP_SECRET=$secret
@@ -172,11 +201,19 @@ BIND_ADDRESS=$bind
 HOST_PORT=$port
 CONTAINER_NAME=aclclouds-keep
 EOF
-
     chmod 600 "$env_file"
     GENERATED_PASSWORD=1
   else
     ok "Existing .env found; preserving secrets and settings."
+
+    ensure_env_key "$env_file" "WEB_SECURE_COOKIE" "false"
+    ensure_env_key "$env_file" "TARGET_REMAINING_HOURS" "24"
+    ensure_env_key "$env_file" "RETRY_HOURS" "6"
+    ensure_env_key "$env_file" "BLOCKED_RETRY_HOURS" "24"
+    ensure_env_key "$env_file" "SCHEDULER_TICK_MINUTES" "10"
+    ensure_env_key "$env_file" "BIND_ADDRESS" "127.0.0.1"
+    ensure_env_key "$env_file" "HOST_PORT" "8787"
+    ensure_env_key "$env_file" "CONTAINER_NAME" "aclclouds-keep"
 
     [[ -n "$INSTANCE_NAME_ARG" ]] && set_env_value "$env_file" "INSTANCE_NAME" "$INSTANCE_NAME_ARG"
     [[ -n "$HOST_PORT_ARG" ]] && set_env_value "$env_file" "HOST_PORT" "$HOST_PORT_ARG"
@@ -192,9 +229,9 @@ read_env_value() {
 wait_for_health() {
   local port="$1"
   local i
+  log "Waiting for the Web UI health check..."
 
-  log "Waiting for the web service health check..."
-  for i in $(seq 1 40); do
+  for i in $(seq 1 45); do
     if curl -fsS --max-time 2 "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
       ok "Web service is healthy."
       return 0
@@ -202,21 +239,23 @@ wait_for_health() {
     sleep 2
   done
 
-  warn "Health endpoint did not become ready in time."
+  warn "Health endpoint did not become ready within 90 seconds."
   return 1
 }
 
 main() {
   ensure_base_tools
   ensure_docker
+  validate_inputs
 
   local dir
-  dir="$(project_dir)"
+  dir="$(find_or_clone_project)"
   cd "$dir"
 
   if [[ "$DO_UPDATE" -eq 1 && -d .git ]]; then
-    log "Updating repository..."
-    git pull --ff-only
+    log "Updating source..."
+    git fetch --depth 1 origin main
+    git reset --hard origin/main
   fi
 
   create_or_update_env "$dir"
@@ -229,34 +268,41 @@ main() {
   instance="$(read_env_value "$dir/.env" INSTANCE_NAME)"
   password="$(read_env_value "$dir/.env" WEB_PASSWORD)"
 
-  log "Building and starting Docker container..."
+  log "Building and starting ACLClouds Keep..."
   docker compose up -d --build
 
-  wait_for_health "$port" || true
+  wait_for_health "$port" || {
+    echo
+    warn "Container did not pass the health check. Recent logs:"
+    docker compose logs --tail=80 aclkeep || true
+  }
 
   echo
   echo "============================================================"
   echo " ACLClouds Keep installed"
   echo "============================================================"
   echo " Instance:      $instance"
-  echo " Project dir:   $dir"
-  echo " Local target:  http://127.0.0.1:$port"
-  echo " Bind:          $bind:$port"
+  echo " Install dir:   $dir"
+  echo " Local URL:     http://127.0.0.1:$port"
+  echo " Published on:  $bind:$port"
   echo
-  echo " 1Panel reverse proxy target:"
+  echo " 1Panel / Nginx reverse proxy target:"
   echo "   http://127.0.0.1:$port"
   echo
   if [[ "$GENERATED_PASSWORD" -eq 1 ]]; then
-    echo " Generated Web password:"
+    echo " Web admin password:"
     echo "   $password"
     echo
-    echo " Save this password now."
+    echo " Save this password now. It is stored in $dir/.env"
   else
-    echo " Existing Web password was preserved."
+    echo " Existing Web admin password was preserved."
   fi
   echo
-  echo " After HTTPS reverse proxy is working:"
+  echo " After HTTPS reverse proxy works, enable Secure cookies:"
   echo "   sed -i 's/^WEB_SECURE_COOKIE=.*/WEB_SECURE_COOKIE=true/' '$dir/.env' && cd '$dir' && docker compose up -d"
+  echo
+  echo " Update later:"
+  echo "   cd '$dir' && sudo bash install.sh --update"
   echo
   echo " Status:"
   echo "   cd '$dir' && docker compose ps"
