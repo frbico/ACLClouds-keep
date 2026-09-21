@@ -1,9 +1,8 @@
 name: ACLClouds Auto Renew
 
 on:
-  schedule:
-    # Daily at 03:17 UTC; avoiding the top of the hour reduces scheduler congestion.
-    - cron: "17 3 * * *"
+  # Scheduled GitHub-hosted execution is intentionally disabled.
+  # Use the self-hosted Debian/1Panel deployment instead.
   workflow_dispatch:
 
 permissions:
