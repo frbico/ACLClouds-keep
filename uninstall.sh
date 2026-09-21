@@ -10,8 +10,11 @@ usage() {
 ACLClouds-Keep complete uninstaller
 
 Usage:
-  sudo bash uninstall.sh
-  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | sudo bash
+  # Run as root:
+  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | bash
+
+  # Local file as root:
+  bash uninstall.sh
 
 Options:
   --install-dir PATH   Installation directory (default: /opt/ACLClouds-keep)
@@ -48,7 +51,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "${EUID}" -eq 0 ]] || { echo "Run with sudo/root." >&2; exit 1; }
+[[ "${EUID}" -eq 0 ]] || { echo "Run this uninstaller as root." >&2; exit 1; }
 
 echo "[ACLKeep] Removing ACLClouds-Keep completely..."
 
