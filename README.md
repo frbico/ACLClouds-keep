@@ -1,23 +1,27 @@
 # ACLClouds Keep
 
-一个用于 **ACLClouds 免费容器定时检查与续期** 的 GitHub Actions 项目，支持两个 ACLClouds 账号，并会遍历每个账号下的全部服务器。
+[![ACLClouds Auto Renew](https://github.com/frbico/ACLClouds-keep/actions/workflows/renew.yml/badge.svg)](https://github.com/frbico/ACLClouds-keep/actions/workflows/renew.yml)
+
+一个用于 **ACLClouds 免费容器定时检查与续期** 的 GitHub Actions 项目。当前版本支持两个 ACLClouds 账号，并会遍历每个账号下发现的全部服务器。
 
 > [!IMPORTANT]
-> 这是非官方第三方自动化项目，与 ACLClouds 官方无隶属关系。ACLClouds 免费套餐目前以“每 4 天手动续期”为服务规则；页面、验证机制或服务条款变化都可能导致本项目失效。请自行确认自动化操作符合你当前使用的服务规则。
+> 这是非官方第三方自动化项目，与 ACLClouds 官方无隶属关系。ACLClouds 的页面、验证机制或服务规则发生变化时，本项目可能失效。请自行确认自动化操作符合你当前使用的服务规则。
 
 ## 功能
 
 - 支持两个账号：`ACL_COOKIES_1`、`ACL_COOKIES_2`
-- 每天自动检查两次
+- 每天自动检查一次，也支持手动运行
 - 自动遍历每个账号中的全部服务器
-- 检测到 `Renew / Renouveler / 续期` 时执行续期
+- 检测到 `Renew / Renouveler / 续期` 后执行续期
 - 支持 `Renew now / Renouveler maintenant / 立即续期`
 - 出现确认弹窗时自动点击 `Confirm / Confirmer / 确认`
 - 检测到 `Reactivate` 时尝试重新激活
-- 页面明确显示服务器离线时尝试 `Start`
+- 页面明确显示服务器离线时尝试点击 `Start`
 - Cookie 失效、页面结构变化或反自动化验证时让 Action 明确失败
-- 失败时上传诊断截图，便于排查
-- Cookie 只通过 GitHub Actions Secrets 注入，不写入仓库
+- 失败时上传诊断截图 Artifact，默认保留 3 天
+- Cookie 仅通过 GitHub Actions Secrets 注入，不写入仓库
+- 支持可选 HTTP / HTTPS / SOCKS5 代理
+- 使用 concurrency 防止多个续期任务同时运行
 
 ## 快速开始
 
@@ -41,7 +45,7 @@ Settings
 | `PROXY_URL` | 否 | 可选 HTTP/HTTPS/SOCKS5 代理 |
 
 > [!CAUTION]
-> Cookie 相当于登录凭证。不要提交到代码、Issue、README、Actions 日志或聊天记录。若 Cookie 曾泄露，请退出相关会话并重新登录。
+> Cookie 相当于登录凭证。不要提交到代码、Issue、README 或 Actions 日志。若 Cookie 曾泄露，请使旧会话失效并重新登录。
 
 ### 2. 获取 Cookie
 
@@ -67,61 +71,85 @@ https://dash.aclclouds.com/
 name1=value1; name2=value2; name3=value3
 ```
 
-项目也支持浏览器导出的 JSON Cookie 数组。
+`renew.py` 也支持浏览器导出的 JSON Cookie 数组。
 
-### 3. 手动测试
+### 3. 第一次手动测试
 
 打开：
 
 ```text
 Actions
-→ ACLClouds Keep
+→ ACLClouds Auto Renew
 → Run workflow
 ```
 
-正常情况下日志会显示账号数量、服务器数量、剩余时间以及是否执行了续期。
+建议第一次一定手动运行，确认两个账号都被识别。
 
-### 4. 自动执行
-
-工作流默认每天运行两次：
+正常日志大致如下：
 
 ```text
-UTC 03:17
-UTC 15:17
+Configured ACLClouds accounts: 2
+
+===== Account 1 =====
+🌐 Opening ACLClouds dashboard...
+🖥️ Found 1 server(s).
+⏳ Approx. time remaining: 3d 18h 0m
+✅ No active renewal button; likely outside the renewal window.
+
+===== Account 2 =====
+...
 ```
 
-GitHub Actions 的定时任务可能存在一定延迟，因此不要依赖“到期前最后一分钟”才运行。
-
-## 典型日志
-
-尚未进入续期窗口：
+进入续期窗口后：
 
 ```text
-===== 账号1 =====
-找到 1 个服务器
-剩余时间约: 3d 18h
-当前没有可用续期按钮
+🔄 Renewal button available; clicking...
+✅ Confirmation clicked.
+✅ Remaining time after renewal: 3d 23h 0m
 ```
 
-进入续期窗口：
+### 4. 自动执行时间
+
+当前工作流：
+
+```yaml
+cron: "17 3 * * *"
+```
+
+即每天 **UTC 03:17** 自动检查一次。
+
+GitHub Actions 的计划任务可能发生延迟，因此项目不会依赖到期前最后几分钟才执行。
+
+## Cookie 失效
+
+如果日志出现：
 
 ```text
-检测到可续期按钮，正在续期...
-已点击确认
-续期动作完成
+Account 1: cookie expired; redirected to login page.
 ```
 
-Cookie 失效：
+重新登录对应 ACLClouds 账号，复制新的 Cookie，然后更新：
 
 ```text
-账号1: Cookie 已失效，页面被重定向到登录页
+Settings
+→ Secrets and variables
+→ Actions
+→ ACL_COOKIES_1
 ```
 
-## Cloudflare / 验证页面
+第二个账号对应 `ACL_COOKIES_2`。不需要修改源码。
 
-如果 ACLClouds 返回 `Verify you are human`、`Just a moment`、`Access denied` 等页面，本项目会停止并报错，**不会尝试绕过 CAPTCHA 或反自动化验证**。
+## Cloudflare / 人机验证
 
-如果只是 GitHub Runner 网络出口问题，可自行配置 `PROXY_URL`：
+如果页面出现 `Verify you are human`、`Just a moment`、`Access denied` 等内容，脚本会报错并保存诊断截图，**不会尝试绕过 CAPTCHA 或交互式验证**。
+
+如果只是 GitHub Runner 的网络出口与 ACLClouds 不兼容，可以自行设置：
+
+```text
+PROXY_URL
+```
+
+支持：
 
 ```text
 http://user:pass@host:port
@@ -129,7 +157,7 @@ https://user:pass@host:port
 socks5://user:pass@host:port
 ```
 
-如果页面要求人工验证，应由你手动完成。
+代理凭证也必须放在 GitHub Secret 中。
 
 ## 项目结构
 
@@ -137,7 +165,7 @@ socks5://user:pass@host:port
 .
 ├── .github/
 │   └── workflows/
-│       └── keep.yml
+│       └── renew.yml
 ├── renew.py
 ├── requirements.txt
 ├── .gitignore
@@ -146,9 +174,30 @@ socks5://user:pass@host:port
 └── README.md
 ```
 
+## 工作流程
+
+```text
+GitHub Actions
+      │
+      ├─ Account 1 Cookie
+      ├─ Account 2 Cookie
+      │
+      ▼
+ACLClouds Dashboard
+      │
+      ├─ 检查 Reactivate
+      ├─ 枚举服务器
+      ├─ 检查剩余时间
+      ├─ 检查 Renew
+      ├─ 必要时 Confirm
+      └─ 明确 Offline 时尝试 Start
+```
+
 ## 本地测试
 
-需要 Python 3.11+：
+需要 Python 3.11+。
+
+Linux / macOS：
 
 ```bash
 python -m venv .venv
@@ -164,19 +213,44 @@ python renew.py
 Windows PowerShell：
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m playwright install chromium
+
 $env:ACL_COOKIES_1="..."
 $env:ACL_COOKIES_2="..."
 python renew.py
 ```
 
+## 排错
+
+失败时工作流会尝试上传：
+
+```text
+aclclouds-renew-screenshots
+```
+
+可在失败的 GitHub Actions Run 页面底部下载 Artifact。
+
+常见情况：
+
+- **跳转登录页**：Cookie 已失效。
+- **找不到服务器**：页面结构可能改变，或账号当前没有可见服务器。
+- **Cloudflare / Verify you are human**：需要人工处理验证，或检查网络出口。
+- **没有 Renew 按钮**：通常尚未进入允许续期的时间窗口。
+- **找到了 Renew 但点击失败**：查看失败日志和诊断截图。
+
 ## 安全建议
 
-- 推荐将仓库设为 **Private**；即使代码本身不包含 Cookie，私有仓库更适合作为个人自动化项目。
-- 仅使用 GitHub Actions Secrets 保存 Cookie。
-- 不要在日志中打印 Cookie。
-- 定期检查 Actions 是否正常执行。
-- Cookie 失效后只更新 Secret，不需要修改代码。
-- 不要把 `PROXY_URL` 的用户名和密码写入工作流文件。
+- 推荐把仓库设置为 **Private**。
+- 只使用 GitHub Actions Secrets 保存 Cookie 和代理凭证。
+- 不要把真实 Cookie 填进源码。
+- 不要在 Issue 中上传包含 Cookie、邮箱或会话信息的完整截图。
+- 如果 Cookie 曾公开泄露，请立即使旧会话失效。
+- 定期查看 Actions 是否仍正常运行。
+
+更多说明见 [SECURITY.md](SECURITY.md)。
 
 ## License
 
