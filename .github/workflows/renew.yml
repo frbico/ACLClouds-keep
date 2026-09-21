@@ -2,9 +2,8 @@ name: ACLClouds Auto Renew
 
 on:
   schedule:
-    # Twice daily for redundancy; avoid the top of the hour.
+    # Daily at 03:17 UTC; avoiding the top of the hour reduces scheduler congestion.
     - cron: "17 3 * * *"
-    - cron: "17 15 * * *"
   workflow_dispatch:
 
 permissions:
