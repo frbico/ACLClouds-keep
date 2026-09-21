@@ -1,21 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="hero">
+<section class="page-title">
   <div>
+    <span class="eyebrow">ACTIVITY LOG</span>
     <h1>运行日志</h1>
-    <p class="muted">这里只记录状态，不记录 Cookie 内容。</p>
+    <p>这里只记录运行状态与事件，不记录 Cookie 原文。</p>
   </div>
-</div>
-<section class="card">
-  <div class="events full-events">
+  <a class="button button-outline" href="{{ url_for('index') }}">返回状态</a>
+</section>
+
+<section class="panel">
+  <div class="log-header-row">
+    <span>时间</span>
+    <span>级别</span>
+    <span>事件</span>
+  </div>
+  <div class="log-table">
     {% for e in events %}
-      <div class="event">
-        <span class="dot {{ e.level }}"></span>
+      <div class="log-row">
         <time>{{ e.created_at|fmt_dt }}</time>
+        <span class="log-level {{ e.level }}"><i></i>{{ e.level }}</span>
         <span>{{ e.message }}</span>
       </div>
     {% else %}
-      <p class="muted">暂无日志。</p>
+      <div class="empty-state">暂无日志。</div>
     {% endfor %}
   </div>
 </section>
