@@ -78,12 +78,15 @@ def parse_cookie_secret(raw: str):
         if not part or "=" not in part:
             continue
         name, value = part.split("=", 1)
+        cookie_name = name.strip()
+        cookie_value = value.strip().replace("\r", "").replace("\n", "")
+        if not cookie_name:
+            continue
         cookies.append(
             {
-                "name": name.strip(),
-                "value": value.strip(),
-                "domain": "aclclouds.com",
-                "path": "/",
+                "name": cookie_name,
+                "value": cookie_value,
+                "url": "https://aclclouds.com/",
             }
         )
     return cookies
@@ -292,7 +295,14 @@ def run_account(browser, account_no: int, cookie_secret: str) -> bool:
         viewport={"width": 1440, "height": 1000},
         locale="en-US",
     )
-    context.add_cookies(cookies)
+    log(f"🍪 Parsed {len(cookies)} cookie(s).")
+    try:
+        context.add_cookies(cookies)
+    except Exception as exc:
+        log(f"❌ Account {account_no}: browser rejected the Cookie data: {exc}")
+        context.close()
+        return False
+
     page = context.new_page()
 
     try:
