@@ -13,9 +13,23 @@ from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from automation import run_check
+from automation import parse_cookie_header, run_check
 from crypto_utils import decrypt_text, encrypt_text
-from storage import add_event, get_bool, get_value, init_db, list_events, set_bool, set_value
+from storage import (
+    add_event,
+    count_accounts,
+    create_account,
+    delete_account,
+    get_account,
+    get_bool,
+    get_value,
+    init_db,
+    list_accounts,
+    list_events,
+    set_bool,
+    set_value,
+    update_account,
+)
 
 APP_SECRET = os.environ.get("APP_SECRET", "").strip()
 ENV_WEB_USERNAME = os.environ.get("WEB_USERNAME", "admin").strip() or "admin"
@@ -79,7 +93,10 @@ def parse_iso(value: str):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
     except Exception:
         return None
 
@@ -91,12 +108,12 @@ def fmt_dt(value: str):
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def fmt_remaining(minutes_raw: str):
+def fmt_remaining(minutes_raw):
     try:
         total = int(minutes_raw)
     except Exception:
         return "—"
-    days, remainder = divmod(total, 1440)
+    days, remainder = divmod(max(0, total), 1440)
     hours, minutes = divmod(remainder, 60)
     return f"{days}d {hours}h {minutes}m"
 
@@ -114,7 +131,7 @@ def read_current_version() -> str:
 
 
 def version_tuple(version: str):
-    match = re.match(r"^\s*v?(\d+)\.(\d+)\.(\d+)", version or "")
+    match = re.match(r"^s*v?(d+).(d+).(d+)", version or "")
     if not match:
         return (0, 0, 0)
     return tuple(int(part) for part in match.groups())
@@ -128,7 +145,7 @@ def fetch_latest_version() -> str:
     with urllib.request.urlopen(req, timeout=6) as response:
         latest = response.read(64).decode("utf-8", "replace").strip()
 
-    if not re.match(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", latest):
+    if not re.match(r"^d+.d+.d+(?:[-+][0-9A-Za-z.-]+)?$", latest):
         raise ValueError("GitHub returned an invalid VERSION value.")
     return latest
 
@@ -157,19 +174,49 @@ def login_required(fn):
     return wrapper
 
 
-def get_cookie():
-    encrypted = get_value("cookie_enc", "")
+def migrate_legacy_cookie():
+    if count_accounts() != 0:
+        return
+
+    legacy_cookie = get_value("cookie_enc", "")
+    if not legacy_cookie:
+        return
+
+    create_account(
+        "账号 1",
+        legacy_cookie,
+        enabled=True,
+        project_url=get_value("project_url", ""),
+        remaining_minutes=get_value("remaining_minutes", ""),
+        last_check_at=get_value("last_check_at", ""),
+        last_renew_at=get_value("last_renew_at", ""),
+        next_check_at=get_value("next_check_at", ""),
+        last_status=get_value("last_status", "never"),
+        last_message=get_value("last_message", ""),
+    )
+    add_event("info", "Legacy single-account Cookie was migrated to account 1.")
+
+
+migrate_legacy_cookie()
+
+
+def decrypt_account_cookie(account) -> str:
+    encrypted = (account or {}).get("cookie_enc", "")
     if not encrypted:
         return ""
     try:
         return decrypt_text(encrypted, APP_SECRET)
     except Exception as exc:
-        add_event("error", f"Stored Cookie could not be decrypted: {exc}")
+        name = (account or {}).get("name", "unknown")
+        add_event("error", f"[{name}] Stored Cookie could not be decrypted: {exc}")
         return ""
 
 
-def set_next_check(dt):
-    set_value("next_check_at", dt.astimezone(timezone.utc).isoformat())
+def set_account_next_check(account_id: int, dt):
+    update_account(
+        account_id,
+        next_check_at=dt.astimezone(timezone.utc).isoformat(),
+    )
 
 
 def schedule_from_remaining(remaining_minutes: int, target_hours: int):
@@ -178,42 +225,59 @@ def schedule_from_remaining(remaining_minutes: int, target_hours: int):
     return now_utc() + timedelta(minutes=delay_minutes)
 
 
-def perform(action: str, source: str = "manual"):
+def account_event(account, level: str, message: str):
+    add_event(level, f"[{account['name']}] {message}")
+
+
+def perform(account_id: int, action: str, source: str = "manual"):
+    account = get_account(account_id)
+    if not account:
+        return False, "Account does not exist."
+
     if not RUN_LOCK.acquire(blocking=False):
-        return False, "Another check is already running."
+        return False, "Another account check is already running."
 
     try:
-        cookie = get_cookie()
+        cookie = decrypt_account_cookie(account)
         if not cookie:
-            return False, "Cookie is not configured."
+            update_account(
+                account_id,
+                last_status="cookie_invalid",
+                last_message="Cookie is not configured or could not be decrypted.",
+            )
+            return False, "Cookie is not configured or could not be decrypted."
 
-        cached_url = get_value("project_url", "") or None
         target_hours = int(
             get_value("target_remaining_hours", str(TARGET_REMAINING_HOURS))
         )
         retry_hours = int(get_value("retry_hours", str(RETRY_HOURS)))
         auto_start = get_bool("auto_start", False)
 
-        set_value("last_check_at", now_utc().isoformat())
-        set_value("last_run_source", source)
-        set_value("last_status", "running")
-        add_event("info", f"{source}: starting ACLClouds {action} check.")
+        update_account(
+            account_id,
+            last_check_at=now_utc().isoformat(),
+            last_status="running",
+            last_message=f"{source}: check is running.",
+        )
+        account_event(account, "info", f"{source}: starting ACLClouds {action} check.")
 
         result = run_check(
             cookie_header=cookie,
-            cached_project_url=cached_url,
+            cached_project_url=account.get("project_url") or None,
             action=action,
             target_remaining_hours=target_hours,
             auto_start=auto_start,
         )
 
-        set_value("last_status", result.status)
-        set_value("last_message", result.message)
-
+        fields = {
+            "last_status": result.status,
+            "last_message": result.message,
+        }
         if result.project_url:
-            set_value("project_url", result.project_url)
+            fields["project_url"] = result.project_url
         if result.remaining_minutes is not None:
-            set_value("remaining_minutes", result.remaining_minutes)
+            fields["remaining_minutes"] = str(result.remaining_minutes)
+        update_account(account_id, **fields)
 
         if not result.ok:
             cooldown = (
@@ -221,22 +285,25 @@ def perform(action: str, source: str = "manual"):
                 if result.status in {"cookie_expired", "cookie_invalid", "blocked"}
                 else retry_hours
             )
-            set_next_check(now_utc() + timedelta(hours=cooldown))
-            add_event("error", f"{result.status}: {result.message}")
+            set_account_next_check(account_id, now_utc() + timedelta(hours=cooldown))
+            account_event(account, "error", f"{result.status}: {result.message}")
             return False, result.message
 
         if result.renewed and result.renewal_verified:
-            set_value("last_renew_at", now_utc().isoformat())
-            set_value("last_status", "renewed")
-            add_event("success", "Renewal verified successfully.")
+            update_account(
+                account_id,
+                last_renew_at=now_utc().isoformat(),
+                last_status="renewed",
+            )
+            account_event(account, "success", "Renewal verified successfully.")
         elif result.renewed:
-            set_value("last_status", "renew_clicked_unverified")
-            add_event("warning", result.message)
+            update_account(account_id, last_status="renew_clicked_unverified")
+            account_event(account, "warning", result.message)
         else:
-            add_event("info", result.message)
+            account_event(account, "info", result.message)
 
         if result.started:
-            add_event("success", "Server Start was clicked.")
+            account_event(account, "success", "Server Start was clicked.")
 
         remaining = result.remaining_minutes
         if result.renewed and not result.renewal_verified:
@@ -252,30 +319,38 @@ def perform(action: str, source: str = "manual"):
         else:
             next_dt = now_utc() + timedelta(hours=retry_hours)
 
-        set_next_check(next_dt)
+        set_account_next_check(account_id, next_dt)
         return True, result.message
 
     except Exception as exc:
-        set_value("last_status", "internal_error")
-        set_value("last_message", str(exc))
-        set_next_check(now_utc() + timedelta(hours=RETRY_HOURS))
-        add_event("error", f"Internal error: {exc}")
+        retry_hours = int(get_value("retry_hours", str(RETRY_HOURS)))
+        update_account(
+            account_id,
+            last_status="internal_error",
+            last_message=str(exc),
+        )
+        set_account_next_check(account_id, now_utc() + timedelta(hours=retry_hours))
+        account_event(account, "error", f"Internal error: {exc}")
         return False, str(exc)
     finally:
         RUN_LOCK.release()
 
 
 def scheduler_tick():
-    if not get_bool("auto_enabled", True) or not get_cookie():
+    if not get_bool("auto_enabled", True):
         return
 
-    next_dt = parse_iso(get_value("next_check_at", ""))
-    if not next_dt:
-        set_next_check(now_utc() + timedelta(minutes=5))
-        return
+    for account in list_accounts(include_disabled=False):
+        if not account.get("cookie_enc"):
+            continue
 
-    if now_utc() >= next_dt:
-        perform("auto", source="scheduler")
+        next_dt = parse_iso(account.get("next_check_at", ""))
+        if not next_dt:
+            set_account_next_check(account["id"], now_utc() + timedelta(minutes=5))
+            continue
+
+        if now_utc() >= next_dt:
+            perform(account["id"], "auto", source="scheduler")
 
 
 scheduler.add_job(
@@ -289,12 +364,50 @@ scheduler.add_job(
 scheduler.start()
 
 
+def _summary_state(accounts):
+    enabled = [a for a in accounts if a.get("enabled")]
+
+    remaining_values = []
+    next_checks = []
+    last_checks = []
+    last_renews = []
+    for account in enabled:
+        try:
+            remaining_values.append(int(account.get("remaining_minutes", "")))
+        except Exception:
+            pass
+        for source, target in (
+            (account.get("next_check_at", ""), next_checks),
+            (account.get("last_check_at", ""), last_checks),
+            (account.get("last_renew_at", ""), last_renews),
+        ):
+            parsed = parse_iso(source)
+            if parsed:
+                target.append(parsed)
+
+    return {
+        "auto_enabled": get_bool("auto_enabled", True),
+        "auto_start": get_bool("auto_start", False),
+        "account_count": len(accounts),
+        "enabled_count": len(enabled),
+        "nearest_remaining": min(remaining_values) if remaining_values else "",
+        "next_check_at": min(next_checks).isoformat() if next_checks else "",
+        "last_check_at": max(last_checks).isoformat() if last_checks else "",
+        "last_renew_at": max(last_renews).isoformat() if last_renews else "",
+        "target_remaining_hours": get_value(
+            "target_remaining_hours", str(TARGET_REMAINING_HOURS)
+        ),
+        "retry_hours": get_value("retry_hours", str(RETRY_HOURS)),
+    }
+
+
 @app.route("/health")
 def health():
     return {
         "ok": True,
         "instance": INSTANCE_NAME,
         "version": read_current_version(),
+        "accounts": count_accounts(),
     }
 
 
@@ -329,27 +442,13 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    state = {
-        "auto_enabled": get_bool("auto_enabled", True),
-        "auto_start": get_bool("auto_start", False),
-        "cookie_configured": bool(get_value("cookie_enc", "")),
-        "remaining_minutes": get_value("remaining_minutes", ""),
-        "last_check_at": get_value("last_check_at", ""),
-        "last_renew_at": get_value("last_renew_at", ""),
-        "next_check_at": get_value("next_check_at", ""),
-        "last_status": get_value("last_status", "never"),
-        "last_message": get_value("last_message", ""),
-        "project_url": get_value("project_url", ""),
-        "target_remaining_hours": get_value(
-            "target_remaining_hours", str(TARGET_REMAINING_HOURS)
-        ),
-        "retry_hours": get_value("retry_hours", str(RETRY_HOURS)),
-    }
+    accounts = list_accounts()
     return render_template(
         "index.html",
         instance_name=INSTANCE_NAME,
-        state=state,
-        events=list_events(12),
+        state=_summary_state(accounts),
+        accounts=accounts,
+        events=list_events(18),
     )
 
 
@@ -415,13 +514,6 @@ def settings():
         set_value("target_remaining_hours", target)
         set_value("retry_hours", retry)
 
-        cookie = request.form.get("cookie", "").strip()
-        if cookie:
-            set_value("cookie_enc", encrypt_text(cookie, APP_SECRET))
-            set_next_check(now_utc() + timedelta(minutes=5))
-            set_value("last_status", "cookie_updated")
-            add_event("info", "Cookie was updated from the web UI.")
-
         if credentials_changed:
             set_value("admin_username", requested_username)
             if new_password:
@@ -432,7 +524,7 @@ def settings():
             session["admin_username"] = requested_username
             add_event("info", "Administrator credentials were updated.")
 
-        flash("设置已保存。", "success")
+        flash("全局设置已保存。", "success")
         return redirect(url_for("settings"))
 
     return render_template(
@@ -440,17 +532,144 @@ def settings():
         instance_name=INSTANCE_NAME,
         auto_enabled=get_bool("auto_enabled", True),
         auto_start=get_bool("auto_start", False),
-        cookie_configured=bool(get_value("cookie_enc", "")),
         target_remaining_hours=get_value(
             "target_remaining_hours", str(TARGET_REMAINING_HOURS)
         ),
         retry_hours=get_value("retry_hours", str(RETRY_HOURS)),
         admin_username=current_username,
+        accounts=list_accounts(),
         current_version=read_current_version(),
         latest_version=get_value("latest_version", ""),
         update_available=get_bool("update_available", False),
         last_update_check_at=get_value("last_update_check_at", ""),
     )
+
+
+def _validated_account_name(raw: str, fallback: str = "ACLClouds 账号") -> str:
+    name = (raw or "").strip() or fallback
+    return name[:64]
+
+
+@app.post("/accounts/add")
+@login_required
+def account_add():
+    name = _validated_account_name(
+        request.form.get("account_name", ""),
+        fallback=f"账号 {count_accounts() + 1}",
+    )
+    cookie = request.form.get("cookie", "").strip()
+    if not cookie:
+        flash("新增账号时必须填写 Cookie。", "error")
+        return redirect(url_for("settings"))
+    if not parse_cookie_header(cookie):
+        flash("Cookie 格式无法解析，请粘贴完整请求头 Cookie。", "error")
+        return redirect(url_for("settings"))
+
+    account_id = create_account(
+        name,
+        encrypt_text(cookie, APP_SECRET),
+        enabled=True,
+        next_check_at=(now_utc() + timedelta(minutes=5)).isoformat(),
+        last_status="cookie_added",
+        last_message="Cookie added. Waiting for the first check.",
+    )
+    add_event("info", f"[{name}] Account #{account_id} was added.")
+    flash(f"已添加 {name}，首次自动检查将在约 5 分钟后进行。", "success")
+    return redirect(url_for("settings"))
+
+
+@app.post("/accounts/<int:account_id>/update")
+@login_required
+def account_update(account_id: int):
+    account = get_account(account_id)
+    if not account:
+        flash("账号不存在。", "error")
+        return redirect(url_for("settings"))
+
+    name = _validated_account_name(request.form.get("account_name", ""), account["name"])
+    fields = {
+        "name": name,
+        "enabled": bool(request.form.get("enabled")),
+    }
+
+    cookie = request.form.get("cookie", "").strip()
+    if cookie:
+        if not parse_cookie_header(cookie):
+            flash(f"{name} 的 Cookie 格式无法解析。", "error")
+            return redirect(url_for("settings"))
+        fields.update(
+            cookie_enc=encrypt_text(cookie, APP_SECRET),
+            project_url="",
+            next_check_at=(now_utc() + timedelta(minutes=5)).isoformat(),
+            last_status="cookie_updated",
+            last_message="Cookie updated. Waiting for verification.",
+        )
+
+    update_account(account_id, **fields)
+    add_event("info", f"[{name}] Account settings were updated.")
+    flash(f"{name} 已保存。", "success")
+    return redirect(url_for("settings"))
+
+
+@app.post("/accounts/<int:account_id>/delete")
+@login_required
+def account_delete(account_id: int):
+    account = get_account(account_id)
+    if not account:
+        flash("账号不存在。", "error")
+        return redirect(url_for("settings"))
+    name = account["name"]
+    delete_account(account_id)
+    add_event("warning", f"[{name}] Account and encrypted Cookie were deleted.")
+    flash(f"已删除 {name}。", "success")
+    return redirect(url_for("settings"))
+
+
+@app.post("/action/check/<int:account_id>")
+@login_required
+def action_check(account_id: int):
+    ok, message = perform(account_id, "check", source="manual-check")
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("index"))
+
+
+@app.post("/action/auto/<int:account_id>")
+@login_required
+def action_auto(account_id: int):
+    ok, message = perform(account_id, "auto", source="manual-auto")
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("index"))
+
+
+@app.post("/action/renew/<int:account_id>")
+@login_required
+def action_renew(account_id: int):
+    ok, message = perform(account_id, "renew", source="manual-renew")
+    flash(message, "success" if ok else "error")
+    return redirect(url_for("index"))
+
+
+@app.post("/action/auto-all")
+@login_required
+def action_auto_all():
+    accounts = list_accounts(include_disabled=False)
+    if not accounts:
+        flash("没有启用中的 ACLClouds 账号。", "error")
+        return redirect(url_for("index"))
+
+    success = 0
+    failed = 0
+    for account in accounts:
+        ok, _ = perform(account["id"], "auto", source="manual-all")
+        if ok:
+            success += 1
+        else:
+            failed += 1
+    flash(
+        f"批量检查完成：成功 {success} 个，失败 {failed} 个。",
+        "success" if failed == 0 else "error",
+    )
+    return redirect(url_for("index"))
 
 
 @app.post("/action/check-update")
@@ -485,35 +704,11 @@ def action_check_update():
     return redirect(url_for("settings"))
 
 
-@app.post("/action/check")
-@login_required
-def action_check():
-    ok, message = perform("check", source="manual-check")
-    flash(message, "success" if ok else "error")
-    return redirect(url_for("index"))
-
-
-@app.post("/action/auto")
-@login_required
-def action_auto():
-    ok, message = perform("auto", source="manual-auto")
-    flash(message, "success" if ok else "error")
-    return redirect(url_for("index"))
-
-
-@app.post("/action/renew")
-@login_required
-def action_renew():
-    ok, message = perform("renew", source="manual-renew")
-    flash(message, "success" if ok else "error")
-    return redirect(url_for("index"))
-
-
 @app.route("/logs")
 @login_required
 def logs():
     return render_template(
         "logs.html",
         instance_name=INSTANCE_NAME,
-        events=list_events(150),
+        events=list_events(200),
     )

@@ -4,7 +4,7 @@
   <div>
     <span class="eyebrow">PREFERENCES</span>
     <h1>运行设置</h1>
-    <p>集中管理自动续期策略、ACLClouds 会话和管理员登录信息。</p>
+    <p>全局策略统一管理；每个 ACLClouds 账号单独保存名称、启用状态和加密 Cookie。</p>
   </div>
   <a class="button button-outline" href="{{ url_for('index') }}">返回状态</a>
 </section>
@@ -25,7 +25,7 @@
         <span class="setting-icon">↻</span>
         <div>
           <b>自动检查 / 续期</b>
-          <p>开启后根据剩余时间动态安排下一次检查，不按固定日期轮询。</p>
+          <p>开启后依次处理所有“已启用”账号。每个账号都有自己的下一次检查时间。</p>
         </div>
       </div>
       <span class="toggle">
@@ -64,7 +64,7 @@
           <input type="number" min="8" max="40" name="target_remaining_hours" value="{{ target_remaining_hours }}">
           <span>小时</span>
         </div>
-        <small>推荐 24。正常情况下约三天才产生一次外部访问。</small>
+        <small>当前默认 24 小时。ACLClouds 页面提示续期通常会在到期前约 2 天开放，因此 24 小时仍在可续期窗口内。</small>
       </div>
 
       <div class="field">
@@ -73,23 +73,8 @@
           <input type="number" min="2" max="12" name="retry_hours" value="{{ retry_hours }}">
           <span>小时</span>
         </div>
-        <small>推荐 6。仅在接近到期但续期未完成时使用。</small>
+        <small>推荐 6。只对接近到期、解析失败或续期未完成的账号重试。</small>
       </div>
-    </div>
-  </section>
-
-  <section class="panel settings-panel">
-    <div class="panel-heading">
-      <div>
-        <span class="eyebrow">ACCOUNT SESSION</span>
-        <h2>ACLClouds Cookie</h2>
-      </div>
-      {% if cookie_configured %}<span class="state-chip success">已配置</span>{% endif %}
-    </div>
-
-    <div class="field">
-      <textarea name="cookie" rows="7" spellcheck="false" placeholder="{% if cookie_configured %}Cookie 已配置。留空表示保持当前 Cookie 不变。{% else %}粘贴完整 Cookie 请求头值，例如：name=value; name2=value2{% endif %}"></textarea>
-      <small>Cookie 使用 APP_SECRET 加密后保存在本地数据库，不会显示在页面或日志中。</small>
     </div>
   </section>
 
@@ -129,9 +114,101 @@
   </section>
 
   <div class="settings-submit">
-    <button class="button button-primary button-large" type="submit">保存设置</button>
+    <button class="button button-primary button-large" type="submit">保存全局设置</button>
   </div>
 </form>
+
+<section class="settings-layout accounts-section" id="accounts">
+  <section class="panel settings-panel">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">ACLClouds ACCOUNTS</span>
+        <h2>账号与 Cookie</h2>
+        <p class="section-note">Cookie 原文不会回显；更新时只要把新 Cookie 粘进去即可。所有 Cookie 都使用 APP_SECRET 加密存储。</p>
+      </div>
+      <span class="state-chip neutral">{{ accounts|length }} 个账号</span>
+    </div>
+
+    {% for account in accounts %}
+    <div class="account-settings-card" id="account-{{ account.id }}">
+      <form method="post" action="{{ url_for('account_update', account_id=account.id) }}" class="account-edit-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="account-card-head">
+          <div>
+            <span class="eyebrow">ACCOUNT #{{ account.id }}</span>
+            <h3>{{ account.name }}</h3>
+          </div>
+          <label class="account-enabled-toggle">
+            <span>加入自动调度</span>
+            <span class="toggle">
+              <input type="checkbox" name="enabled" {% if account.enabled %}checked{% endif %}>
+              <span class="toggle-slider"></span>
+            </span>
+          </label>
+        </div>
+
+        <div class="field">
+          <label>账号备注名</label>
+          <input type="text" name="account_name" maxlength="64" value="{{ account.name }}" required>
+        </div>
+
+        <div class="field account-cookie-field">
+          <label>替换 Cookie（可选）</label>
+          <textarea name="cookie" rows="4" spellcheck="false" placeholder="留空表示保持当前 Cookie 不变；需要更新时粘贴完整 Cookie 请求头，例如：name=value; name2=value2"></textarea>
+          <small>
+            当前状态：{% if account.cookie_enc %}<b class="good">Cookie 已配置</b>{% else %}<b class="bad">未配置</b>{% endif %}
+            · 上次状态：{{ account.last_status }}
+          </small>
+        </div>
+
+        <div class="account-form-actions">
+          <button class="button button-primary" type="submit">保存此账号</button>
+          <button class="button button-danger-soft" type="submit" form="delete-account-{{ account.id }}" onclick="return confirm('确定删除 {{ account.name|e }}？该账号的加密 Cookie 和状态会一起删除。')">删除账号</button>
+        </div>
+      </form>
+      <form id="delete-account-{{ account.id }}" method="post" action="{{ url_for('account_delete', account_id=account.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      </form>
+    </div>
+    {% else %}
+      <div class="empty-state">还没有账号。下面新增第一个即可。</div>
+    {% endfor %}
+  </section>
+
+  <section class="panel settings-panel add-account-panel">
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">ADD ACCOUNT</span>
+        <h2>添加 ACLClouds 账号</h2>
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('account_add') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid">
+        <div class="field">
+          <label>账号备注名</label>
+          <input type="text" name="account_name" maxlength="64" placeholder="例如：Lisa / Killy / 账号 3">
+          <small>只是本地备注，不需要与 ACLClouds 用户名一致。</small>
+        </div>
+        <div class="field account-ip-note">
+          <label>网络出口</label>
+          <div class="inline-notice">同一实例添加的所有账号共享同一公网出口 IP。</div>
+        </div>
+      </div>
+
+      <div class="field add-cookie-field">
+        <label>Cookie</label>
+        <textarea name="cookie" rows="5" spellcheck="false" required placeholder="粘贴完整 Cookie 请求头值，例如：name=value; name2=value2"></textarea>
+        <small>保存后页面不会再显示 Cookie 原文。新账号会在约 5 分钟后自动进行第一次状态检查。</small>
+      </div>
+
+      <div class="settings-submit">
+        <button class="button button-primary button-large" type="submit">添加账号</button>
+      </div>
+    </form>
+  </section>
+</section>
 
 <section class="panel settings-panel update-panel">
   <div class="update-info">
