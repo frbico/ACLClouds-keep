@@ -7,6 +7,7 @@
   <title>ACLClouds-Keep</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='multi_account.css') }}">
 </head>
 <body>
   <header class="site-header">
@@ -24,7 +25,7 @@
       {% if session.get('authenticated') %}
       <nav class="main-nav" aria-label="主导航">
         <a class="{% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">状态</a>
-        <a class="{% if request.endpoint == 'settings' %}active{% endif %}" href="{{ url_for('settings') }}">设置</a>
+        <a class="{% if request.endpoint in ['settings','account_add','account_update','account_delete'] %}active{% endif %}" href="{{ url_for('settings') }}">设置</a>
         <a class="{% if request.endpoint == 'logs' %}active{% endif %}" href="{{ url_for('logs') }}">日志</a>
       </nav>
 
@@ -51,7 +52,7 @@
   <footer class="site-footer">
     <div class="footer-shell">
       <span>ACLClouds-Keep</span>
-      <span>Self-hosted · Low-frequency · Docker ready</span>
+      <span>Self-hosted · Multi-account · Low-frequency</span>
     </div>
   </footer>
 </body>

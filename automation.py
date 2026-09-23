@@ -1,15 +1,34 @@
 import re
 from dataclasses import dataclass
 from typing import Optional
+
 from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://aclclouds.com"
 PROJECTS_URL = f"{BASE_URL}/dashboard/projects"
 
-RENEW_TEXTS = ["Renew now", "Renew", "Renouveler maintenant", "Renouveler", "立即续期", "续期"]
+RENEW_TEXTS = [
+    "Renew now",
+    "Renew",
+    "Renouveler maintenant",
+    "Renouveler",
+    "立即续期",
+    "续期",
+]
 CONFIRM_TEXTS = ["Confirm", "Confirmer", "确认"]
 START_TEXTS = ["Start", "Démarrer", "开机"]
 OFFLINE_TEXTS = ["OFFLINE", "Offline", "Hors ligne", "离线"]
+MANAGE_TEXTS = ["Manage", "Gérer", "管理"]
+
+EXPIRY_MARKERS = (
+    r"expires?\s+in",
+    r"time\s+remaining",
+    r"expire\s+dans",
+    r"expiration\s+dans",
+    r"temps\s+restant",
+    r"剩余时间",
+    r"到期剩余",
+)
 
 
 @dataclass
@@ -36,6 +55,55 @@ def parse_cookie_header(raw: str):
         if name:
             cookies.append({"name": name, "value": value, "url": f"{BASE_URL}/"})
     return cookies
+
+
+def parse_duration_minutes(text: str) -> Optional[int]:
+    """Parse ACLClouds-style durations such as ``2d 3h`` or ``2j 3h``."""
+    if not text:
+        return None
+
+    normalized = text.replace("\xa0", " ").strip().lower()
+    total = 0
+    found = False
+
+    unit_patterns = (
+        (1440, r"(\d+)\s*(?:d|day|days|j|jour|jours)\b"),
+        (60, r"(\d+)\s*(?:h|hr|hrs|hour|hours|heure|heures)\b"),
+        (1, r"(\d+)\s*(?:m|min|mins|minute|minutes)\b"),
+    )
+    for multiplier, pattern in unit_patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            total += int(match.group(1)) * multiplier
+            found = True
+
+    zh_days = re.search(r"(\d+)\s*天", normalized)
+    zh_hours = re.search(r"(\d+)\s*小时", normalized)
+    zh_minutes = re.search(r"(\d+)\s*分钟", normalized)
+    for multiplier, match in ((1440, zh_days), (60, zh_hours), (1, zh_minutes)):
+        if match:
+            total += int(match.group(1)) * multiplier
+            found = True
+
+    return total if found else None
+
+
+def extract_remaining_minutes_from_text(body: str) -> Optional[int]:
+    if not body:
+        return None
+
+    text = body.replace("\xa0", " ")
+    marker_pattern = "|".join(EXPIRY_MARKERS)
+    matches = re.finditer(
+        rf"(?:{marker_pattern})\s*:?\s*([^\n\r]{{1,90}})",
+        text,
+        re.IGNORECASE,
+    )
+    for match in matches:
+        parsed = parse_duration_minutes(match.group(1))
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def page_is_login(page) -> bool:
@@ -72,24 +140,7 @@ def extract_remaining_minutes(page) -> Optional[int]:
         body = page.locator("body").inner_text(timeout=3500)
     except Exception:
         return None
-    match = re.search(
-        r"(?:Time remaining|Temps restant|剩余时间)\s*:?\s*([^\n\r]+)",
-        body,
-        re.IGNORECASE,
-    )
-    if not match:
-        return None
-    segment = match.group(1)
-    days = re.search(r"(\d+)\s*d\b", segment, re.IGNORECASE)
-    hours = re.search(r"(\d+)\s*h\b", segment, re.IGNORECASE)
-    minutes = re.search(r"(\d+)\s*(?:min|m)\b", segment, re.IGNORECASE)
-    if not any((days, hours, minutes)):
-        return None
-    return (
-        (int(days.group(1)) if days else 0) * 1440
-        + (int(hours.group(1)) if hours else 0) * 60
-        + (int(minutes.group(1)) if minutes else 0)
-    )
+    return extract_remaining_minutes_from_text(body)
 
 
 def first_visible_text(page, texts, timeout_ms=1800):
@@ -104,11 +155,96 @@ def first_visible_text(page, texts, timeout_ms=1800):
     return None
 
 
+def expand_first_service(page) -> bool:
+    """Expand the first service card on the current My Projects layout.
+
+    ACLClouds currently exposes the expiry only after the small arrow next to the
+    service type (for example ``golang generic``) is clicked. Prefer semantic
+    ``aria-expanded`` controls, then fall back to the compact button adjacent to
+    a ``* generic`` label. No destructive button is ever selected.
+    """
+    if extract_remaining_minutes(page) is not None:
+        return True
+
+    selectors = (
+        "main button[aria-expanded='false']",
+        "main [role='button'][aria-expanded='false']",
+        "button[aria-expanded='false']",
+        "[role='button'][aria-expanded='false']",
+    )
+    for selector in selectors:
+        try:
+            candidates = page.locator(selector)
+            count = min(candidates.count(), 20)
+            for i in range(count):
+                candidate = candidates.nth(i)
+                try:
+                    label = (candidate.inner_text(timeout=300) or "").strip().lower()
+                except Exception:
+                    label = ""
+                if label in {"manage", "delete", "gérer", "supprimer", "管理", "删除"}:
+                    continue
+                try:
+                    if candidate.is_visible(timeout=300) and candidate.is_enabled():
+                        candidate.click(timeout=1500)
+                        page.wait_for_timeout(650)
+                        if extract_remaining_minutes(page) is not None:
+                            return True
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    try:
+        clicked = page.evaluate(
+            r"""
+            () => {
+              const blocked = new Set(['manage', 'delete', 'gérer', 'supprimer', '管理', '删除']);
+              const nodes = [...document.querySelectorAll('main *, body *')];
+              const labels = nodes.filter((el) => {
+                const text = (el.textContent || '').trim();
+                return /\bgeneric\s*$/i.test(text) && text.length < 90;
+              });
+
+              for (const label of labels) {
+                const containers = [label.parentElement, label.parentElement?.parentElement].filter(Boolean);
+                for (const container of containers) {
+                  const controls = [...container.querySelectorAll('button,[role="button"]')];
+                  const target = controls.find((control) => {
+                    const text = (control.textContent || '').trim().toLowerCase();
+                    return !blocked.has(text) && !control.disabled;
+                  });
+                  if (target) {
+                    target.click();
+                    return true;
+                  }
+                }
+              }
+              return false;
+            }
+            """
+        )
+        if clicked:
+            page.wait_for_timeout(700)
+            if extract_remaining_minutes(page) is not None:
+                return True
+    except Exception:
+        pass
+
+    return extract_remaining_minutes(page) is not None
+
+
 def discover_project_url(page) -> Optional[str]:
     page.goto(PROJECTS_URL, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1800)
+    page.wait_for_timeout(1500)
     if page_is_login(page) or page_is_blocked(page):
         return None
+
+    if expand_first_service(page):
+        return page.url or PROJECTS_URL
+
+    # Backward compatibility with the older layout that linked to a dedicated
+    # project/server page.
     for link in page.locator("a").all():
         try:
             href = link.get_attribute("href") or ""
@@ -118,6 +254,19 @@ def discover_project_url(page) -> Optional[str]:
             return f"{BASE_URL}{href}"
         if "/server/" in href:
             return href if href.startswith("http") else f"{BASE_URL}{href}"
+
+    # Some layouts expose a Manage button instead of an anchor. Clicking Manage
+    # is non-destructive and may navigate to a dedicated details page.
+    manage = first_visible_text(page, MANAGE_TEXTS, timeout_ms=1200)
+    if manage:
+        try:
+            manage.click(timeout=3000)
+            page.wait_for_timeout(1000)
+            if not page_is_login(page) and not page_is_blocked(page):
+                if expand_first_service(page) or extract_remaining_minutes(page) is not None:
+                    return page.url or PROJECTS_URL
+        except Exception:
+            pass
     return None
 
 
@@ -125,27 +274,29 @@ def open_project(page, cached_project_url: Optional[str]) -> Optional[str]:
     if cached_project_url:
         try:
             page.goto(cached_project_url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(1500)
-            if (
-                not page_is_login(page)
-                and not page_is_blocked(page)
-                and extract_remaining_minutes(page) is not None
-            ):
-                return cached_project_url
+            page.wait_for_timeout(1200)
+            if not page_is_login(page) and not page_is_blocked(page):
+                expand_first_service(page)
+                if extract_remaining_minutes(page) is not None:
+                    return page.url or cached_project_url
         except Exception:
             pass
+
     project_url = discover_project_url(page)
     if not project_url:
         return None
-    page.goto(project_url, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1800)
-    return project_url
+
+    if page.url != project_url:
+        page.goto(project_url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1300)
+    expand_first_service(page)
+    return page.url or project_url
 
 
 def try_renew(page, previous_remaining: Optional[int]):
-    button = first_visible_text(page, RENEW_TEXTS, timeout_ms=2200)
+    button = first_visible_text(page, RENEW_TEXTS, timeout_ms=2400)
     if not button:
-        return False, False, previous_remaining, "Renew button is not available."
+        return False, False, previous_remaining, "Renew button is not available yet."
     try:
         if not button.is_enabled():
             return False, False, previous_remaining, "Renew button is visible but disabled."
@@ -165,7 +316,8 @@ def try_renew(page, previous_remaining: Optional[int]):
             pass
 
     page.reload(wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1700)
+    page.wait_for_timeout(1500)
+    expand_first_service(page)
     new_remaining = extract_remaining_minutes(page)
 
     verified = False
@@ -228,17 +380,21 @@ def run_check(
                 return CheckResult(
                     False,
                     "cookie_expired",
-                    "The ACLClouds session appears expired. Update the Cookie in Settings.",
+                    "The ACLClouds session appears expired. Update this account's Cookie in Settings.",
                 )
             if not project_url:
-                return CheckResult(False, "project_not_found", "No ACLClouds service could be found under My services.")
+                return CheckResult(
+                    False,
+                    "project_not_found",
+                    "No readable ACLClouds service could be found under My services.",
+                )
 
             remaining = extract_remaining_minutes(page)
             if remaining is None:
                 return CheckResult(
                     False,
                     "parse_error",
-                    "Remaining time could not be read. ACLClouds may have changed the page layout.",
+                    "Expiry could not be read. The project card may not have expanded or ACLClouds may have changed the page layout.",
                     project_url=project_url,
                 )
 

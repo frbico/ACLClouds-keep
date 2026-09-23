@@ -35,3 +35,6 @@ jobs:
 
       - name: Build Docker image
         run: docker build -t aclclouds-keep:test .
+
+      - name: Unit tests
+        run: docker run --rm aclclouds-keep:test python -m unittest discover -s tests -p 'test_*.py' -v
