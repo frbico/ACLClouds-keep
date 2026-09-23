@@ -29,8 +29,9 @@ class AutomationParsingTests(unittest.TestCase):
             extract_remaining_minutes_from_text("Expire dans 1j 4h"),
             1680,
         )
+        chinese = "\u5269\u4f59\u65f6\u95f4\uff1a2\u5929 6\u5c0f\u65f6 30\u5206\u949f"
         self.assertEqual(
-            extract_remainining_minutes_from_text("剩余时间：2天 6小时 30分钟�),
+            extract_remaining_minutes_from_text(chinese),
             3270,
         )
 
