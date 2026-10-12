@@ -24,7 +24,7 @@ body {
   color: var(--text);
   background: linear-gradient(180deg, #f7faff 0, #f3f7fc 260px, #f6f8fb 100%);
 }
-button, input, textarea { font: inherit; }
+button, input, textarea, select { font: inherit; }
 a { color: var(--blue); text-decoration: none; }
 button { cursor: pointer; }
 
@@ -450,7 +450,7 @@ button { cursor: pointer; }
 .field { margin: 0; }
 .field label { display: block; margin-bottom: 8px; color: var(--navy-2); font-size: 13px; font-weight: 800; }
 .field small { display: block; margin-top: 8px; color: #7c8da7; font-size: 12px; line-height: 1.55; }
-input[type="number"], input[type="password"], textarea {
+input[type="number"], input[type="password"], input[type="url"], select, textarea {
   width: 100%;
   outline: none;
   border: 1px solid #ccd9ea;
@@ -459,9 +459,9 @@ input[type="number"], input[type="password"], textarea {
   color: var(--text);
   transition: border .18s, box-shadow .18s;
 }
-input[type="number"], input[type="password"] { height: 46px; padding: 0 13px; }
+input[type="number"], input[type="password"], input[type="url"], select { height: 46px; padding: 0 13px; }
 textarea { min-height: 145px; padding: 13px; resize: vertical; line-height: 1.6; }
-input:focus, textarea:focus { border-color: #79b5ff; box-shadow: 0 0 0 4px rgba(8,119,249,.09); }
+input:focus, textarea:focus, select:focus { border-color: #79b5ff; box-shadow: 0 0 0 4px rgba(8,119,249,.09); }
 .input-with-suffix { position: relative; }
 .input-with-suffix input { padding-right: 55px; }
 .input-with-suffix span {
@@ -653,6 +653,8 @@ body {
 input[type="text"],
 input[type="number"],
 input[type="password"],
+input[type="url"],
+select,
 textarea {
   width: 100%;
   outline: none;
@@ -666,7 +668,9 @@ textarea {
 
 input[type="text"],
 input[type="number"],
-input[type="password"] {
+input[type="password"],
+input[type="url"],
+select {
   height: 46px;
   padding: 0 13px;
 }

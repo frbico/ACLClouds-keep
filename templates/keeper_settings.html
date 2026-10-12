@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-title">
-  <div><span class="eyebrow">PREFERENCES</span><h1>Online 守护设置</h1><p>每个 ACLClouds 账号独立保存 Cookie、Bot URL 与启用状态。</p></div>
+  <div><span class="eyebrow">PREFERENCES</span><h1>Online 守护设置</h1><p>每个账号明确绑定一个 ACLClouds Bot 与一个探针节点。</p></div>
   <a class="button button-outline" href="{{ url_for('index') }}">返回状态</a>
 </section>
 
@@ -10,19 +10,21 @@
   <section class="panel settings-panel">
     <div class="panel-heading"><div><span class="eyebrow">AUTOMATION</span><h2>自动守护</h2></div></div>
     <label class="setting-row">
-      <div class="setting-copy"><span class="setting-icon">▶</span><div><b>确保 Bot 始终 Online</b><p>发现未 Online 且 Start 可用时自动点击，并等待确认 Online。</p></div></div>
+      <div class="setting-copy"><span class="setting-icon">▶</span><div><b>确保 Bot 始终 Online</b><p>探针心跳连续超时后才打开绑定的控制面板；仅在面板确认可用 Start 时点击。</p></div></div>
       <span class="toggle"><input type="checkbox" name="auto_enabled" {% if auto_enabled %}checked{% endif %}><span class="toggle-slider"></span></span>
     </label>
-    <div class="inline-notice">启用后，无论是续期、异常还是手动 Stop 导致停止，程序都会重新 Start。要保持手动停止，请先暂停对应账号。</div>
+    <div class="inline-notice">启用后，续期停止、异常停止或手动 Stop 都会触发重新 Start。要保持停止，请先暂停对应账号。</div>
   </section>
 
   <section class="panel settings-panel">
-    <div class="panel-heading"><div><span class="eyebrow">SCHEDULE</span><h2>检查频率</h2></div></div>
-    <div class="form-grid"><div class="field">
-      <label>Online 检查间隔</label>
-      <div class="input-with-suffix"><input type="number" min="1" max="60" name="check_interval_minutes" value="{{ check_interval_minutes }}"><span>分钟</span></div>
-      <small>推荐 5 分钟；启动未确认时会在 5 分钟后重试。</small>
-    </div></div>
+    <div class="panel-heading"><div><span class="eyebrow">HEARTBEAT</span><h2>探针触发策略</h2></div><span class="state-chip {% if probe_error %}warning{% else %}success{% endif %}">{% if probe_error %}API 异常{% else %}已连接{% endif %}</span></div>
+    <div class="account-metrics">
+      <div><span>探针 API</span><b>{{ probe_api_url }}</b></div>
+      <div><span>本地判定周期</span><b>每 {{ probe_poll_seconds }} 秒</b></div>
+      <div><span>离线判定</span><b>超过 {{ probe_stale_seconds }} 秒</b></div>
+      <div><span>二次确认</span><b>连续 {{ probe_confirmations }} 次</b></div>
+    </div>
+    {% if probe_error %}<div class="inline-notice">当前无法读取探针节点：{{ probe_error }}。已有绑定仍会保留，恢复连接后自动继续。</div>{% else %}<div class="inline-notice">不需要在探针主控配置通知。程序订阅公开 WebSocket 心跳；仅断线时低频回退 API，正常在线时不会打开 ACLClouds 控制面板。</div>{% endif %}
   </section>
 
   <section class="panel settings-panel">
@@ -39,7 +41,7 @@
 
 <section class="settings-layout accounts-section" id="accounts">
   <section class="panel settings-panel">
-    <div class="panel-heading"><div><span class="eyebrow">ACLClouds ACCOUNTS</span><h2>账号与 Bot</h2><p class="section-note">URL 推荐填写；留空时会根据 Cookie 从服务列表自动发现。</p></div><span class="state-chip neutral">{{ accounts|length }} 个账号</span></div>
+    <div class="panel-heading"><div><span class="eyebrow">ACLClouds ACCOUNTS</span><h2>账号、Bot 与探针绑定</h2><p class="section-note">请按实际对应关系选择；系统不会根据名称或顺序猜测。</p></div><span class="state-chip neutral">{{ accounts|length }} 个账号</span></div>
     {% for account in accounts %}
     <div class="account-settings-card" id="account-{{ account.id }}">
       <form method="post" action="{{ url_for('account_update', account_id=account.id) }}" class="account-edit-form">
@@ -49,7 +51,8 @@
         </div>
         <div class="form-grid">
           <div class="field"><label>账号备注名</label><input type="text" name="account_name" maxlength="64" value="{{ account.name }}" required></div>
-          <div class="field"><label>Bot 控制面板 URL</label><input type="url" name="server_url" value="{{ account.project_url }}" placeholder="https://aclclouds.com/server/d7ff16ce"><small>每个 Bot 唯一；留空自动发现。</small></div>
+          <div class="field"><label>Bot 控制面板 URL</label><input type="url" name="server_url" value="{{ account.project_url }}" placeholder="https://aclclouds.com/server/d7ff16ce"><small>每个 Bot 唯一；建议明确填写。</small></div>
+          <div class="field"><label>对应探针节点</label><select name="probe_node_id"><option value="">未绑定（仅手动与到期兜底）</option>{% if account.probe_node_id %}<option value="{{ account.probe_node_id }}" selected>{{ account.probe_node_name or account.probe_node_id }}（当前绑定）</option>{% endif %}{% for node in probe_nodes %}{% if node.id != account.probe_node_id %}<option value="{{ node.id }}">{{ node.name }}</option>{% endif %}{% endfor %}</select><small>绑定保存节点 UUID；改名不会丢失对应关系。</small></div>
         </div>
         <div class="field account-cookie-field"><label>替换 Cookie（可选）</label><textarea name="cookie" rows="4" spellcheck="false" placeholder="留空保持现有 Cookie；更新时粘贴完整 Cookie 请求头"></textarea><small>Cookie 原文不会回显。</small></div>
         <div class="account-form-actions"><button class="button button-primary" type="submit">保存此账号</button><button class="button button-danger-soft" type="submit" form="delete-account-{{ account.id }}" onclick="return confirm('确定删除此账号？')">删除账号</button></div>
@@ -65,7 +68,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-grid">
         <div class="field"><label>账号备注名</label><input type="text" name="account_name" maxlength="64" placeholder="例如：Killy / Bot 2"></div>
-        <div class="field"><label>Bot 控制面板 URL（推荐）</label><input type="url" name="server_url" placeholder="https://aclclouds.com/server/d7ff16ce"><small>留空将自动发现。</small></div>
+        <div class="field"><label>Bot 控制面板 URL（推荐）</label><input type="url" name="server_url" placeholder="https://aclclouds.com/server/d7ff16ce"><small>留空将根据 Cookie 自动发现。</small></div>
+        <div class="field"><label>对应探针节点</label><select name="probe_node_id"><option value="">暂不绑定</option>{% for node in probe_nodes %}<option value="{{ node.id }}">{{ node.name }}</option>{% endfor %}</select><small>已被其他账号使用的节点会在保存时拒绝重复绑定。</small></div>
       </div>
       <div class="field add-cookie-field"><label>Cookie</label><textarea name="cookie" rows="5" required spellcheck="false" placeholder="name=value; name2=value2"></textarea></div>
       <div class="settings-submit"><button class="button button-primary button-large" type="submit">添加并开始守护</button></div>

@@ -15,6 +15,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from automation import parse_cookie_header, run_check, validate_server_url
 from crypto_utils import decrypt_text, encrypt_text
+from probe import HeartbeatMonitor, fetch_probe_nodes
 from storage import (
     add_event,
     count_accounts,
@@ -36,7 +37,17 @@ ENV_WEB_USERNAME = os.environ.get("WEB_USERNAME", "admin").strip() or "admin"
 ENV_WEB_PASSWORD = os.environ.get("WEB_PASSWORD", "").strip()
 INSTANCE_NAME = "ACLClouds Online Keeper"
 
-DEFAULT_CHECK_INTERVAL_MINUTES = int(os.environ.get("CHECK_INTERVAL_MINUTES", "5"))
+PROBE_API_URL = os.environ.get("PROBE_API_URL", "https://tz.ssxi.de/api/servers").strip()
+PROBE_POLL_SECONDS = max(15, int(os.environ.get("PROBE_POLL_SECONDS", "30")))
+PROBE_STALE_SECONDS = max(60, int(os.environ.get("PROBE_STALE_SECONDS", "180")))
+PROBE_CONFIRMATIONS = max(1, int(os.environ.get("PROBE_CONFIRMATIONS", "2")))
+PROBE_API_FALLBACK_SECONDS = max(
+    60, int(os.environ.get("PROBE_API_FALLBACK_SECONDS", "60"))
+)
+PROBE_TRIGGER_COOLDOWN_MINUTES = max(
+    1, int(os.environ.get("PROBE_TRIGGER_COOLDOWN_MINUTES", "10"))
+)
+EXPIRY_GRACE_MINUTES = max(1, int(os.environ.get("EXPIRY_GRACE_MINUTES", "70")))
 RETRY_MINUTES = int(os.environ.get("RETRY_MINUTES", "5"))
 BLOCKED_RETRY_HOURS = int(os.environ.get("BLOCKED_RETRY_HOURS", "24"))
 SCHEDULER_TICK_MINUTES = int(os.environ.get("SCHEDULER_TICK_MINUTES", "1"))
@@ -61,12 +72,15 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 RUN_LOCK = threading.Lock()
 scheduler = BackgroundScheduler(timezone="UTC")
+heartbeat_monitor = HeartbeatMonitor(PROBE_API_URL)
+PROBE_FALLBACK_NODES = {}
+PROBE_FALLBACK_FETCHED_AT = None
+PROBE_FALLBACK_ERROR = ""
 
 init_db()
 if get_value("auto_enabled", "") == "":
     set_bool("auto_enabled", True)
-if get_value("check_interval_minutes", "") == "":
-    set_value("check_interval_minutes", DEFAULT_CHECK_INTERVAL_MINUTES)
+
 if get_value("admin_username", "") == "":
     set_value("admin_username", ENV_WEB_USERNAME)
 if get_value("admin_password_hash", "") == "":
@@ -186,6 +200,31 @@ def migrate_online_keeper_state():
 migrate_online_keeper_state()
 
 
+def migrate_probe_keeper_state():
+    if get_value("probe_keeper_v3_migrated", ""):
+        return
+    for account in list_accounts():
+        update_account(
+            account["id"],
+            next_check_at="",
+            next_check_reason="",
+            probe_status="unconfigured" if not account.get("probe_node_id") else "waiting",
+            probe_miss_count=0,
+            probe_last_trigger_at="",
+            last_message="Probe heartbeat mode enabled. Bind a probe node in Settings.",
+        )
+    set_value("probe_keeper_v3_migrated", "1")
+    add_event("info", "Probe heartbeat mode enabled; fixed control-panel polling was disabled.")
+
+
+migrate_probe_keeper_state()
+if get_bool("auto_enabled", True):
+    heartbeat_monitor.update_ids(
+        account.get("probe_node_id") for account in list_accounts(include_disabled=False)
+    )
+heartbeat_monitor.start()
+
+
 def decrypt_account_cookie(account) -> str:
     encrypted = (account or {}).get("cookie_enc", "")
     if not encrypted:
@@ -197,15 +236,42 @@ def decrypt_account_cookie(account) -> str:
         return ""
 
 
-def check_interval() -> int:
+def set_next_check(account_id: int, when, reason: str):
+    update_account(
+        account_id,
+        next_check_at=when.astimezone(timezone.utc).isoformat(),
+        next_check_reason=reason,
+    )
+
+
+def clear_next_check(account_id: int):
+    update_account(account_id, next_check_at="", next_check_reason="")
+
+
+def probe_node_options():
     try:
-        return min(60, max(1, int(get_value("check_interval_minutes", "5"))))
-    except ValueError:
-        return 5
+        nodes = fetch_probe_nodes(PROBE_API_URL)
+        return sorted(nodes.values(), key=lambda node: (node.name.lower(), node.id)), ""
+    except Exception as exc:
+        return [], str(exc)
 
 
-def set_next_check(account_id: int, when):
-    update_account(account_id, next_check_at=when.astimezone(timezone.utc).isoformat())
+def checked_probe_node(raw: str, account_id: int | None = None):
+    node_id = (raw or "").strip()
+    if not node_id:
+        return "", ""
+    if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", node_id):
+        raise ValueError("探针节点 ID 格式无效。")
+    for account in list_accounts():
+        if account["id"] != account_id and account.get("probe_node_id") == node_id:
+            raise ValueError(f"该探针已绑定到账号 {account['name']}，不能重复绑定。")
+        if account["id"] == account_id and account.get("probe_node_id") == node_id:
+            return node_id, account.get("probe_node_name") or node_id
+    nodes = fetch_probe_nodes(PROBE_API_URL)
+    node = nodes.get(node_id)
+    if not node:
+        raise ValueError("探针 API 中找不到所选节点，请刷新设置页后重试。")
+    return node.id, node.name
 
 
 def account_event(account, level: str, message: str):
@@ -242,6 +308,8 @@ def perform(account_id: int, source: str = "manual"):
         fields = {"last_status": result.status, "last_message": result.message}
         if result.server_url:
             fields["project_url"] = result.server_url
+        if result.remaining_minutes is not None:
+            fields["remaining_minutes"] = str(result.remaining_minutes)
         if result.start_clicked:
             fields["last_renew_at"] = now_utc().isoformat()
         update_account(account_id, **fields)
@@ -249,12 +317,21 @@ def perform(account_id: int, source: str = "manual"):
         if result.online_verified:
             level = "success" if result.start_clicked else "info"
             account_event(account, level, result.message)
-            set_next_check(account_id, now_utc() + timedelta(minutes=check_interval()))
+            if result.remaining_minutes is not None:
+                set_next_check(
+                    account_id,
+                    now_utc() + timedelta(
+                        minutes=result.remaining_minutes + EXPIRY_GRACE_MINUTES
+                    ),
+                    "expiry-fallback",
+                )
+            else:
+                clear_next_check(account_id)
             return True, result.message
 
         if result.status == "starting":
             account_event(account, "warning", result.message)
-            set_next_check(account_id, now_utc() + timedelta(minutes=2))
+            set_next_check(account_id, now_utc() + timedelta(minutes=2), "starting-retry")
             return True, result.message
 
         cooldown = (
@@ -262,59 +339,207 @@ def perform(account_id: int, source: str = "manual"):
             if result.status in {"cookie_expired", "cookie_invalid", "blocked"}
             else timedelta(minutes=max(1, RETRY_MINUTES))
         )
-        set_next_check(account_id, now_utc() + cooldown)
+        set_next_check(account_id, now_utc() + cooldown, "error-retry")
         account_event(account, "error", f"{result.status}: {result.message}")
         return False, result.message
     except Exception as exc:
         update_account(account_id, last_status="internal_error", last_message=str(exc))
-        set_next_check(account_id, now_utc() + timedelta(minutes=max(1, RETRY_MINUTES)))
+        set_next_check(
+            account_id,
+            now_utc() + timedelta(minutes=max(1, RETRY_MINUTES)),
+            "error-retry",
+        )
         account_event(account, "error", f"Internal error: {exc}")
         return False, str(exc)
     finally:
         RUN_LOCK.release()
 
+def probe_tick():
+    global PROBE_FALLBACK_NODES, PROBE_FALLBACK_FETCHED_AT, PROBE_FALLBACK_ERROR
+
+    if not get_bool("auto_enabled", True):
+        heartbeat_monitor.update_ids([])
+        set_value("probe_api_status", "paused")
+        return
+    accounts = list_accounts(include_disabled=False)
+    node_ids = [account.get("probe_node_id") for account in accounts if account.get("probe_node_id")]
+    heartbeat_monitor.update_ids(node_ids)
+    if not node_ids:
+        for account in accounts:
+            update_account(account["id"], probe_status="unconfigured", probe_miss_count=0)
+        set_value("probe_api_status", "idle")
+        return
+    snapshot = heartbeat_monitor.snapshot()
+    current = now_utc()
+    last_message = snapshot.get("last_message_at")
+    websocket_healthy = bool(
+        last_message and current - last_message <= timedelta(seconds=PROBE_STALE_SECONDS)
+    )
+
+    fallback_nodes = {}
+    if not websocket_healthy:
+        should_fetch = (
+            PROBE_FALLBACK_FETCHED_AT is None
+            or current - PROBE_FALLBACK_FETCHED_AT
+            >= timedelta(seconds=PROBE_API_FALLBACK_SECONDS)
+        )
+        if should_fetch:
+            try:
+                PROBE_FALLBACK_NODES = fetch_probe_nodes(PROBE_API_URL)
+                PROBE_FALLBACK_FETCHED_AT = current
+                PROBE_FALLBACK_ERROR = ""
+            except Exception as exc:
+                PROBE_FALLBACK_NODES = {}
+                PROBE_FALLBACK_FETCHED_AT = current
+                PROBE_FALLBACK_ERROR = str(exc)
+        fallback_nodes = PROBE_FALLBACK_NODES
+
+    monitoring_available = websocket_healthy or bool(fallback_nodes)
+    if websocket_healthy:
+        set_value("probe_api_status", "websocket")
+        set_value("probe_api_last_error", "")
+        set_value("probe_api_last_checked_at", last_message.isoformat())
+    elif fallback_nodes:
+        set_value("probe_api_status", "api_fallback")
+        set_value("probe_api_last_error", snapshot.get("last_error") or "")
+        set_value("probe_api_last_checked_at", PROBE_FALLBACK_FETCHED_AT.isoformat())
+    else:
+        previous_status = get_value("probe_api_status", "")
+        set_value("probe_api_status", "error")
+        error = PROBE_FALLBACK_ERROR or snapshot.get("last_error") or "No heartbeat received."
+        set_value("probe_api_last_error", error)
+        if previous_status != "error":
+            add_event("error", f"Probe heartbeat unavailable; no Bot action will be taken: {error}")
+
+    for account in accounts:
+        node_id = account.get("probe_node_id") or ""
+        if not node_id:
+            update_account(account["id"], probe_status="unconfigured", probe_miss_count=0)
+            continue
+        if not monitoring_available:
+            update_account(account["id"], probe_status="monitor_error", probe_miss_count=0)
+            continue
+
+        node_name = account.get("probe_node_name") or node_id
+        if websocket_healthy:
+            last_seen = snapshot["heartbeats"].get(node_id)
+            subscribed_since = snapshot["subscribed_since"].get(node_id, current)
+            age_seconds = (
+                (current - last_seen).total_seconds()
+                if last_seen
+                else (current - subscribed_since).total_seconds()
+            )
+            report_at = last_seen
+            report_interval = 60
+        else:
+            node = fallback_nodes.get(node_id)
+            if node:
+                elapsed = max(0, (current - PROBE_FALLBACK_FETCHED_AT).total_seconds())
+                age_seconds = node.report_age_seconds + elapsed
+                report_at = datetime.fromtimestamp(node.report_at_ms / 1000, tz=timezone.utc)
+                report_interval = node.report_interval_seconds
+                node_name = node.name
+            else:
+                age_seconds = PROBE_STALE_SECONDS + 1
+                report_at = None
+                report_interval = 60
+
+        threshold = max(PROBE_STALE_SECONDS, report_interval * 3)
+        if age_seconds <= threshold:
+            if account.get("probe_status") in {
+                "suspect",
+                "offline",
+                "api_error",
+                "monitor_error",
+            }:
+                account_event(account, "success", f"Probe heartbeat recovered: {node_name}.")
+            update_account(
+                account["id"],
+                probe_node_name=node_name,
+                probe_last_report_at=report_at.isoformat() if report_at else "",
+                probe_status="online",
+                probe_miss_count=0,
+            )
+            continue
+
+        misses = int(account.get("probe_miss_count") or 0) + 1
+        status = "offline" if misses >= PROBE_CONFIRMATIONS else "suspect"
+        update_account(
+            account["id"],
+            probe_node_name=node_name,
+            probe_last_report_at=report_at.isoformat() if report_at else "",
+            probe_status=status,
+            probe_miss_count=misses,
+        )
+        if misses < PROBE_CONFIRMATIONS:
+            continue
+
+        last_trigger = parse_iso(account.get("probe_last_trigger_at", ""))
+        if last_trigger and current - last_trigger < timedelta(
+            minutes=PROBE_TRIGGER_COOLDOWN_MINUTES
+        ):
+            continue
+        update_account(account["id"], probe_last_trigger_at=current.isoformat())
+        account_event(
+            account,
+            "warning",
+            f"Probe heartbeat stale for {node_name}; opening its bound Bot control panel.",
+        )
+        perform(account["id"], source="probe-offline")
 
 def scheduler_tick():
     if not get_bool("auto_enabled", True):
         return
+    current = now_utc()
     for account in list_accounts(include_disabled=False):
         if not account.get("cookie_enc"):
             continue
         next_at = parse_iso(account.get("next_check_at", ""))
-        if not next_at:
-            set_next_check(account["id"], now_utc() + timedelta(minutes=1))
-        elif now_utc() >= next_at:
-            perform(account["id"], source="scheduler")
+        if next_at and current >= next_at:
+            reason = account.get("next_check_reason") or "scheduled"
+            clear_next_check(account["id"])
+            perform(account["id"], source=reason)
 
 
+scheduler.add_job(
+    probe_tick,
+    "interval",
+    seconds=PROBE_POLL_SECONDS,
+    id="aclclouds_probe_tick",
+    max_instances=1,
+    coalesce=True,
+)
 scheduler.add_job(
     scheduler_tick,
     "interval",
     minutes=max(1, SCHEDULER_TICK_MINUTES),
-    id="aclclouds_online_tick",
+    id="aclclouds_fallback_tick",
     max_instances=1,
     coalesce=True,
 )
 scheduler.start()
 
-
 def summary_state(accounts):
     enabled = [account for account in accounts if account.get("enabled")]
     online = [account for account in enabled if account.get("last_status") in {"online", "started"}]
+    bound = [account for account in enabled if account.get("probe_node_id")]
+    probe_online = [account for account in bound if account.get("probe_status") == "online"]
     next_checks = [parse_iso(a.get("next_check_at", "")) for a in enabled]
-    last_checks = [parse_iso(a.get("last_check_at", "")) for a in enabled]
     last_starts = [parse_iso(a.get("last_renew_at", "")) for a in enabled]
     return {
         "auto_enabled": get_bool("auto_enabled", True),
         "account_count": len(accounts),
         "enabled_count": len(enabled),
         "online_count": len(online),
+        "bound_count": len(bound),
+        "probe_online_count": len(probe_online),
         "next_check_at": min((v for v in next_checks if v), default=None),
-        "last_check_at": max((v for v in last_checks if v), default=None),
         "last_start_at": max((v for v in last_starts if v), default=None),
-        "check_interval_minutes": check_interval(),
+        "probe_api_status": get_value("probe_api_status", "waiting"),
+        "probe_last_checked_at": get_value("probe_api_last_checked_at", ""),
+        "probe_poll_seconds": PROBE_POLL_SECONDS,
+        "probe_stale_seconds": PROBE_STALE_SECONDS,
     }
-
 
 @app.route("/health")
 def health():
@@ -323,7 +548,8 @@ def health():
         "instance": INSTANCE_NAME,
         "version": read_current_version(),
         "accounts": count_accounts(),
-        "mode": "online-keeper",
+        "mode": "probe-heartbeat-keeper",
+        "probe_api_status": get_value("probe_api_status", "waiting"),
     }
 
 
@@ -369,12 +595,6 @@ def index():
 def settings():
     current_username = get_admin_username()
     if request.method == "POST":
-        try:
-            interval = min(60, max(1, int(request.form.get("check_interval_minutes", "5"))))
-        except ValueError:
-            flash("检查间隔必须是数字。", "error")
-            return redirect(url_for("settings"))
-
         requested_username = request.form.get("admin_username", "").strip()
         current_password = request.form.get("current_admin_password", "")
         new_password = request.form.get("new_admin_password", "")
@@ -396,7 +616,6 @@ def settings():
                     return redirect(url_for("settings"))
 
         set_bool("auto_enabled", bool(request.form.get("auto_enabled")))
-        set_value("check_interval_minutes", interval)
         if credentials_changed:
             set_value("admin_username", requested_username)
             if new_password:
@@ -405,18 +624,23 @@ def settings():
         flash("设置已保存。", "success")
         return redirect(url_for("settings"))
 
+    nodes, probe_error = probe_node_options()
     return render_template(
         "keeper_settings.html",
         instance_name=INSTANCE_NAME,
         auto_enabled=get_bool("auto_enabled", True),
-        check_interval_minutes=check_interval(),
         admin_username=current_username,
         accounts=list_accounts(),
+        probe_nodes=nodes,
+        probe_error=probe_error,
+        probe_api_url=PROBE_API_URL,
+        probe_poll_seconds=PROBE_POLL_SECONDS,
+        probe_stale_seconds=PROBE_STALE_SECONDS,
+        probe_confirmations=PROBE_CONFIRMATIONS,
         current_version=read_current_version(),
         latest_version=get_value("latest_version", ""),
         update_available=get_bool("update_available", False),
     )
-
 
 def account_name(raw: str, fallback: str) -> str:
     return ((raw or "").strip() or fallback)[:64]
@@ -442,22 +666,26 @@ def account_add():
         return redirect(url_for("settings"))
     try:
         server_url = checked_server_url(request.form.get("server_url", ""))
-    except ValueError as exc:
-        flash(str(exc), "error")
+        node_id, node_name = checked_probe_node(request.form.get("probe_node_id", ""))
+    except Exception as exc:
+        flash(f"保存失败：{exc}", "error")
         return redirect(url_for("settings"))
 
     create_account(
         name,
         encrypt_text(cookie, APP_SECRET),
         project_url=server_url,
+        probe_node_id=node_id,
+        probe_node_name=node_name,
+        probe_status="waiting" if node_id else "unconfigured",
         next_check_at=(now_utc() + timedelta(minutes=1)).isoformat(),
+        next_check_reason="initial-verification",
         last_status="cookie_added",
-        last_message="Account added. Waiting for Online verification.",
+        last_message="Account added. Waiting for initial Online verification.",
     )
-    add_event("info", f"[{name}] Account added to Online Keeper.")
-    flash(f"已添加 {name}，约 1 分钟内首次检查。", "success")
+    add_event("info", f"[{name}] Account added to Online Keeper; probe: {node_name or 'unbound'}.")
+    flash(f"已添加 {name}，约 1 分钟内首次确认控制面板状态。", "success")
     return redirect(url_for("settings"))
-
 
 @app.post("/accounts/<int:account_id>/update")
 @login_required
@@ -468,16 +696,29 @@ def account_update(account_id: int):
         return redirect(url_for("settings"))
     try:
         server_url = checked_server_url(request.form.get("server_url", ""))
-    except ValueError as exc:
-        flash(str(exc), "error")
+        node_id, node_name = checked_probe_node(
+            request.form.get("probe_node_id", ""), account_id=account_id
+        )
+    except Exception as exc:
+        flash(f"保存失败：{exc}", "error")
         return redirect(url_for("settings"))
 
     name = account_name(request.form.get("account_name", ""), account["name"])
+    probe_changed = node_id != (account.get("probe_node_id") or "")
     fields = {
         "name": name,
         "enabled": bool(request.form.get("enabled")),
         "project_url": server_url,
+        "probe_node_id": node_id,
+        "probe_node_name": node_name,
     }
+    if probe_changed:
+        fields.update(
+            probe_status="waiting" if node_id else "unconfigured",
+            probe_miss_count=0,
+            probe_last_report_at="",
+            probe_last_trigger_at="",
+        )
     cookie = request.form.get("cookie", "").strip()
     if cookie:
         if not parse_cookie_header(cookie):
@@ -487,14 +728,14 @@ def account_update(account_id: int):
     if cookie or server_url != (account.get("project_url") or ""):
         fields.update(
             next_check_at=(now_utc() + timedelta(minutes=1)).isoformat(),
+            next_check_reason="account-update-verification",
             last_status="account_updated",
             last_message="Cookie or Bot URL updated. Waiting for verification.",
         )
     update_account(account_id, **fields)
-    add_event("info", f"[{name}] Account settings updated.")
+    add_event("info", f"[{name}] Account settings updated; probe: {node_name or 'unbound'}.")
     flash(f"{name} 已保存。", "success")
     return redirect(url_for("settings"))
-
 
 @app.post("/accounts/<int:account_id>/delete")
 @login_required

@@ -2,105 +2,38 @@
 {% block content %}
 <section class="hero-panel">
   <div class="hero-copy">
-    <span class="eyebrow">ONLINE KEEPER</span>
+    <span class="eyebrow">HEARTBEAT ONLINE KEEPER</span>
     <h1>ACLClouds Bot 在线守护</h1>
-    <p>逐账号检查 Bot 控制面板；发现未 Online 时自动点击 Start，并等待页面确认 Online。</p>
+    <p>正常时只读取探针心跳；连续离线后才检查绑定的 Bot 控制面板并按需点击 Start。</p>
   </div>
   <div class="hero-actions">
-    <div class="hero-status {% if state.auto_enabled %}is-on{% else %}is-off{% endif %}">
-      <span class="status-pulse"></span>
-      {% if state.auto_enabled %}自动守护已开启{% else %}自动守护已暂停{% endif %}
-    </div>
-    {% if state.enabled_count %}
-    <form method="post" action="{{ url_for('action_check_all') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="button button-light" type="submit">全部检查一次</button>
-    </form>
-    {% endif %}
+    <div class="hero-status {% if state.auto_enabled %}is-on{% else %}is-off{% endif %}"><span class="status-pulse"></span>{% if state.auto_enabled %}自动守护已开启{% else %}自动守护已暂停{% endif %}</div>
+    {% if state.enabled_count %}<form method="post" action="{{ url_for('action_check_all') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-light" type="submit">全部检查一次</button></form>{% endif %}
   </div>
 </section>
 
 <section class="metric-grid">
-  <article class="metric-card metric-blue">
-    <div class="metric-icon">◎</div>
-    <div><span class="metric-label">守护账号</span><strong>{{ state.enabled_count }} / {{ state.account_count }}</strong><small>启用 / 已添加</small></div>
-  </article>
-  <article class="metric-card metric-green">
-    <div class="metric-icon">✓</div>
-    <div><span class="metric-label">已确认 Online</span><strong>{{ state.online_count }}</strong><small>最近一次检查结果</small></div>
-  </article>
-  <article class="metric-card metric-indigo">
-    <div class="metric-icon">↻</div>
-    <div><span class="metric-label">下次检查</span><strong class="metric-date">{{ state.next_check_at|fmt_dt }}</strong><small>每 {{ state.check_interval_minutes }} 分钟守护</small></div>
-  </article>
-  <article class="metric-card metric-cyan">
-    <div class="metric-icon">▶</div>
-    <div><span class="metric-label">最近点击 Start</span><strong class="metric-date">{{ state.last_start_at|fmt_dt }}</strong><small>点击后仍需确认 Online</small></div>
-  </article>
+  <article class="metric-card metric-blue"><div class="metric-icon">◎</div><div><span class="metric-label">守护账号</span><strong>{{ state.enabled_count }} / {{ state.account_count }}</strong><small>启用 / 已添加</small></div></article>
+  <article class="metric-card metric-green"><div class="metric-icon">✓</div><div><span class="metric-label">探针心跳正常</span><strong>{{ state.probe_online_count }} / {{ state.bound_count }}</strong><small>在线 / 已绑定</small></div></article>
+  <article class="metric-card metric-indigo"><div class="metric-icon">↻</div><div><span class="metric-label">到期 / 重试兜底</span><strong class="metric-date">{{ state.next_check_at|fmt_dt }}</strong><small>不再固定访问控制面板</small></div></article>
+  <article class="metric-card metric-cyan"><div class="metric-icon">▶</div><div><span class="metric-label">最近点击 Start</span><strong class="metric-date">{{ state.last_start_at|fmt_dt }}</strong><small>点击后仍需确认 Online</small></div></article>
 </section>
 
-{% if accounts %}
-<section class="account-stack">
-  {% for account in accounts %}
-  <article class="panel account-panel {% if not account.enabled %}account-disabled{% endif %}">
-    <div class="panel-heading account-heading">
-      <div>
-        <span class="eyebrow">ACCOUNT #{{ account.id }}</span>
-        <h2>{{ account.name }}</h2>
-        <p class="section-note">
-          {% if account.enabled %}强制 Online 守护中{% else %}守护已暂停，可保持手动停止{% endif %}
-          · {% if account.project_url %}已指定 Bot URL{% else %}自动发现 Bot URL{% endif %}
-        </p>
-      </div>
-      <span class="state-chip {% if account.last_status in ['online','started'] %}success{% elif account.last_status in ['never','cookie_added','account_updated'] %}neutral{% else %}warning{% endif %}">
-        {% if account.last_status == 'online' %}Online
-        {% elif account.last_status == 'started' %}已启动并 Online
-        {% elif account.last_status == 'starting' %}启动中
-        {% elif account.last_status == 'running' %}检查中
-        {% elif account.last_status == 'never' %}等待首次检查
-        {% else %}{{ account.last_status }}{% endif %}
-      </span>
+{% if accounts %}<section class="account-stack">
+  {% for account in accounts %}<article class="panel account-panel {% if not account.enabled %}account-disabled{% endif %}">
+    <div class="panel-heading account-heading"><div><span class="eyebrow">ACCOUNT #{{ account.id }}</span><h2>{{ account.name }}</h2><p class="section-note">{% if account.enabled %}强制 Online 守护中{% else %}守护已暂停，可保持手动停止{% endif %} · {% if account.probe_node_id %}已绑定 {{ account.probe_node_name or account.probe_node_id }}{% else %}尚未绑定探针{% endif %}</p></div>
+      <span class="state-chip {% if account.last_status in ['online','started'] %}success{% elif account.last_status in ['never','cookie_added','account_updated'] %}neutral{% else %}warning{% endif %}">{% if account.last_status == 'online' %}Online{% elif account.last_status == 'started' %}已启动并 Online{% elif account.last_status == 'starting' %}启动中{% elif account.last_status == 'running' %}检查中{% elif account.last_status == 'never' %}等待首次检查{% else %}{{ account.last_status }}{% endif %}</span>
     </div>
-
     <div class="account-metrics">
-      <div><span>Bot 控制面板</span><b>{{ account.project_url or "自动发现" }}</b></div>
-      <div><span>下次检查</span><b>{{ account.next_check_at|fmt_dt }}</b></div>
-      <div><span>上次检查</span><b>{{ account.last_check_at|fmt_dt }}</b></div>
+      <div><span>探针节点</span><b>{{ account.probe_node_name or "未绑定" }} · {{ account.probe_status }}</b></div>
+      <div><span>最近探针心跳</span><b>{{ account.probe_last_report_at|fmt_dt }}</b></div>
+      <div><span>到期 / 重试兜底</span><b>{{ account.next_check_at|fmt_dt }}</b></div>
       <div><span>上次点击 Start</span><b>{{ account.last_renew_at|fmt_dt }}</b></div>
     </div>
+    <div class="state-message account-message"><span class="state-message-icon">i</span><div><b>{{ account.last_message or "尚无运行记录。" }}</b><p>{% if not account.probe_node_id %}请在设置中选择与此 Bot 确实对应的探针节点；程序不会自动猜测。{% else %}探针连续超时才检查此账号自己的控制面板。手动 Stop 也会被恢复；要保持停止请先暂停账号。{% endif %}</p></div></div>
+    <div class="account-actions"><form method="post" action="{{ url_for('action_check', account_id=account.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-primary" type="submit">立即检查并保 Online</button></form><a class="button button-outline" href="{{ url_for('settings') }}#account-{{ account.id }}">编辑 / 绑定 / 暂停</a></div>
+  </article>{% endfor %}
+</section>{% else %}<section class="panel"><div class="empty-state"><h2>还没有 ACLClouds 账号</h2><p>添加 Cookie、Bot 控制面板 URL，并选择实际对应的探针节点。</p><a class="button button-primary" href="{{ url_for('settings') }}#accounts">添加账号</a></div></section>{% endif %}
 
-    <div class="state-message account-message">
-      <span class="state-message-icon">i</span>
-      <div>
-        <b>{{ account.last_message or "尚无运行记录。" }}</b>
-        <p>启用守护时，手动 Stop 也会在下一次检查时重新 Start；需要保持停止请先暂停此账号。</p>
-      </div>
-    </div>
-
-    <div class="account-actions">
-      <form method="post" action="{{ url_for('action_check', account_id=account.id) }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="button button-primary" type="submit">立即检查并保 Online</button>
-      </form>
-      <a class="button button-outline" href="{{ url_for('settings') }}#account-{{ account.id }}">编辑 / 暂停</a>
-    </div>
-  </article>
-  {% endfor %}
-</section>
-{% else %}
-<section class="panel"><div class="empty-state">
-  <h2>还没有 ACLClouds 账号</h2>
-  <p>添加每个账号的 Cookie；Bot 控制面板 URL 可以填写，也可以留空自动发现。</p>
-  <a class="button button-primary" href="{{ url_for('settings') }}#accounts">添加账号</a>
-</div></section>
-{% endif %}
-
-<section class="panel">
-  <div class="panel-heading"><div><span class="eyebrow">ACTIVITY</span><h2>最近日志</h2></div><a class="button button-outline button-small" href="{{ url_for('logs') }}">查看全部</a></div>
-  <div class="timeline">
-    {% for e in events %}
-    <div class="timeline-item"><span class="timeline-dot {{ e.level }}"></span><time>{{ e.created_at|fmt_dt }}</time><span class="timeline-message">{{ e.message }}</span></div>
-    {% else %}<div class="empty-state">暂无日志。</div>{% endfor %}
-  </div>
-</section>
+<section class="panel"><div class="panel-heading"><div><span class="eyebrow">ACTIVITY</span><h2>最近日志</h2></div><a class="button button-outline button-small" href="{{ url_for('logs') }}">查看全部</a></div><div class="timeline">{% for e in events %}<div class="timeline-item"><span class="timeline-dot {{ e.level }}"></span><time>{{ e.created_at|fmt_dt }}</time><span class="timeline-message">{{ e.message }}</span></div>{% else %}<div class="empty-state">暂无日志。</div>{% endfor %}</div></section>
 {% endblock %}

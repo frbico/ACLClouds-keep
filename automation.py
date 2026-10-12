@@ -23,6 +23,7 @@ class CheckResult:
     server_url: Optional[str] = None
     start_clicked: bool = False
     online_verified: bool = False
+    remaining_minutes: Optional[int] = None
 
 
 def parse_cookie_header(raw: str):
@@ -46,6 +47,42 @@ def validate_server_url(raw: str) -> Optional[str]:
     if re.fullmatch(r"https://aclclouds\.com/server/[A-Za-z0-9_-]+", value):
         return value
     return None
+
+
+def parse_duration_minutes(text: str) -> Optional[int]:
+    """Parse ACLClouds durations such as ``1d 23h``, ``2j 3h`` or Chinese units."""
+    normalized = (text or "").replace("\xa0", " ").strip().lower()
+    total = 0
+    found = False
+    for multiplier, pattern in (
+        (1440, r"(\d+)\s*(?:d|day|days|j|jour|jours|天)"),
+        (60, r"(\d+)\s*(?:h|hr|hrs|hour|hours|heure|heures|小时)"),
+        (1, r"(\d+)\s*(?:m|min|mins|minute|minutes|分钟)"),
+    ):
+        match = re.search(pattern, normalized, re.I)
+        if match:
+            total += int(match.group(1)) * multiplier
+            found = True
+    return total if found else None
+
+
+def extract_remaining_minutes_from_text(body: str) -> Optional[int]:
+    text = (body or "").replace("\xa0", " ")
+    marker = r"(?:time\s+remaining|remaining\s+time|temps\s+restant|剩余时间)"
+    for match in re.finditer(rf"{marker}\s*:?\s*([^\n\r]{{1,80}})", text, re.I):
+        parsed = parse_duration_minutes(match.group(1))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def extract_remaining_minutes(page) -> Optional[int]:
+    try:
+        return extract_remaining_minutes_from_text(
+            page.locator("body").inner_text(timeout=2500)
+        )
+    except Exception:
+        return None
 
 
 def extract_server_state_from_text(body: str) -> str:
@@ -372,6 +409,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                 )
 
             state, start = wait_for_control_panel(page)
+            remaining = extract_remaining_minutes(page)
             if state == "online":
                 return CheckResult(
                     True,
@@ -379,6 +417,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     "Bot is Online.",
                     server_url=server_url,
                     online_verified=True,
+                    remaining_minutes=remaining,
                 )
 
             if not start:
@@ -387,6 +426,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     "status_unknown",
                     "The control panel did not expose a visible Start button within 25 seconds.",
                     server_url=server_url,
+                    remaining_minutes=remaining,
                 )
 
             try:
@@ -397,6 +437,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     "status_unknown",
                     f"Start button state could not be read: {exc}",
                     server_url=server_url,
+                    remaining_minutes=remaining,
                 )
 
             if not start_enabled:
@@ -407,12 +448,14 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                         "Bot is Online (verified from the control-button state).",
                         server_url=server_url,
                         online_verified=True,
+                        remaining_minutes=extract_remaining_minutes(page) or remaining,
                     )
                 return CheckResult(
                     True,
                     "starting",
                     "Start is disabled and Online is not confirmed yet; it will be checked again.",
                     server_url=server_url,
+                    remaining_minutes=remaining,
                 )
 
             try:
@@ -423,6 +466,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     "start_failed",
                     f"Start could not be clicked: {exc}",
                     server_url=server_url,
+                    remaining_minutes=remaining,
                 )
 
             if wait_until_online(page, server_url):
@@ -433,6 +477,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     server_url=server_url,
                     start_clicked=True,
                     online_verified=True,
+                    remaining_minutes=extract_remaining_minutes(page) or remaining,
                 )
             return CheckResult(
                 False,
@@ -440,6 +485,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                 "Start was clicked, but Online was not confirmed within 120 seconds.",
                 server_url=server_url,
                 start_clicked=True,
+                remaining_minutes=extract_remaining_minutes(page) or remaining,
             )
         finally:
             context.close()

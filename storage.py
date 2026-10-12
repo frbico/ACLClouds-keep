@@ -15,8 +15,26 @@ ACCOUNT_FIELDS = {
     "last_check_at",
     "last_renew_at",
     "next_check_at",
+    "next_check_reason",
     "last_status",
     "last_message",
+    "probe_node_id",
+    "probe_node_name",
+    "probe_last_report_at",
+    "probe_status",
+    "probe_miss_count",
+    "probe_last_trigger_at",
+}
+
+
+MIGRATION_COLUMNS = {
+    "next_check_reason": "TEXT NOT NULL DEFAULT ''",
+    "probe_node_id": "TEXT NOT NULL DEFAULT ''",
+    "probe_node_name": "TEXT NOT NULL DEFAULT ''",
+    "probe_last_report_at": "TEXT NOT NULL DEFAULT ''",
+    "probe_status": "TEXT NOT NULL DEFAULT 'unconfigured'",
+    "probe_miss_count": "INTEGER NOT NULL DEFAULT 0",
+    "probe_last_trigger_at": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -65,13 +83,32 @@ def init_db():
                 last_check_at TEXT NOT NULL DEFAULT '',
                 last_renew_at TEXT NOT NULL DEFAULT '',
                 next_check_at TEXT NOT NULL DEFAULT '',
+                next_check_reason TEXT NOT NULL DEFAULT '',
                 last_status TEXT NOT NULL DEFAULT 'never',
                 last_message TEXT NOT NULL DEFAULT '',
+                probe_node_id TEXT NOT NULL DEFAULT '',
+                probe_node_name TEXT NOT NULL DEFAULT '',
+                probe_last_report_at TEXT NOT NULL DEFAULT '',
+                probe_status TEXT NOT NULL DEFAULT 'unconfigured',
+                probe_miss_count INTEGER NOT NULL DEFAULT 0,
+                probe_last_trigger_at TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            """
+        )
+        existing = {
+            row["name"] for row in conn.execute("PRAGMA table_info(accounts)").fetchall()
+        }
+        for column, definition in MIGRATION_COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} {definition}")
+        conn.executescript(
+            """
             CREATE INDEX IF NOT EXISTS idx_accounts_enabled_next_check
                 ON accounts(enabled, next_check_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_probe_node
+                ON accounts(probe_node_id) WHERE probe_node_id != '';
             """
         )
 
@@ -141,8 +178,15 @@ def create_account(
     last_check_at: str = "",
     last_renew_at: str = "",
     next_check_at: str = "",
+    next_check_reason: str = "",
     last_status: str = "never",
     last_message: str = "",
+    probe_node_id: str = "",
+    probe_node_name: str = "",
+    probe_last_report_at: str = "",
+    probe_status: str = "unconfigured",
+    probe_miss_count: int = 0,
+    probe_last_trigger_at: str = "",
 ) -> int:
     now = utc_now_iso()
     with connect() as conn:
@@ -150,9 +194,11 @@ def create_account(
             """
             INSERT INTO accounts(
                 name, cookie_enc, enabled, project_url, remaining_minutes,
-                last_check_at, last_renew_at, next_check_at,
-                last_status, last_message, created_at, updated_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_check_at, last_renew_at, next_check_at, next_check_reason,
+                last_status, last_message, probe_node_id, probe_node_name,
+                probe_last_report_at, probe_status, probe_miss_count,
+                probe_last_trigger_at, created_at, updated_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -163,8 +209,15 @@ def create_account(
                 last_check_at,
                 last_renew_at,
                 next_check_at,
+                next_check_reason,
                 last_status,
                 last_message,
+                probe_node_id,
+                probe_node_name,
+                probe_last_report_at,
+                probe_status,
+                int(probe_miss_count or 0),
+                probe_last_trigger_at,
                 now,
                 now,
             ),
@@ -178,6 +231,8 @@ def update_account(account_id: int, **fields) -> bool:
         return get_account(account_id) is not None
     if "enabled" in clean:
         clean["enabled"] = 1 if bool(clean["enabled"]) else 0
+    if "probe_miss_count" in clean:
+        clean["probe_miss_count"] = int(clean["probe_miss_count"] or 0)
     clean = {key: "" if value is None else value for key, value in clean.items()}
     clean["updated_at"] = utc_now_iso()
     assignments = ", ".join(f"{key} = ?" for key in clean)

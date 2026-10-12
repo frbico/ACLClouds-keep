@@ -79,7 +79,13 @@ APP_SECRET=$secret
 WEB_USERNAME=admin
 WEB_PASSWORD=$password
 WEB_SECURE_COOKIE=false
-CHECK_INTERVAL_MINUTES=5
+PROBE_API_URL=https://tz.ssxi.de/api/servers
+PROBE_POLL_SECONDS=30
+PROBE_STALE_SECONDS=180
+PROBE_CONFIRMATIONS=2
+PROBE_API_FALLBACK_SECONDS=60
+PROBE_TRIGGER_COOLDOWN_MINUTES=10
+EXPIRY_GRACE_MINUTES=70
 RETRY_MINUTES=5
 BLOCKED_RETRY_HOURS=24
 SCHEDULER_TICK_MINUTES=1
@@ -90,7 +96,13 @@ EOF_ENV
   chmod 600 .env
   GENERATED_PASSWORD="$password"
 else
-  ensure_env_key .env CHECK_INTERVAL_MINUTES 5
+  ensure_env_key .env PROBE_API_URL https://tz.ssxi.de/api/servers
+  ensure_env_key .env PROBE_POLL_SECONDS 30
+  ensure_env_key .env PROBE_STALE_SECONDS 180
+  ensure_env_key .env PROBE_CONFIRMATIONS 2
+  ensure_env_key .env PROBE_API_FALLBACK_SECONDS 60
+  ensure_env_key .env PROBE_TRIGGER_COOLDOWN_MINUTES 10
+  ensure_env_key .env EXPIRY_GRACE_MINUTES 70
   ensure_env_key .env RETRY_MINUTES 5
   ensure_env_key .env BLOCKED_RETRY_HOURS 24
   ensure_env_key .env SCHEDULER_TICK_MINUTES 1

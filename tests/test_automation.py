@@ -21,6 +21,15 @@ class AutomationTests(unittest.TestCase):
         self.assertIsNone(automation_v2.validate_server_url("https://example.com/server/d7ff16ce"))
         self.assertIsNone(automation_v2.validate_server_url("https://aclclouds.com/dashboard/projects"))
 
+    def test_time_remaining_parsing(self):
+        self.assertEqual(automation_v2.parse_duration_minutes("1d 23h"), 2820)
+        self.assertEqual(automation_v2.parse_duration_minutes("2j 3h 5m"), 3065)
+        self.assertEqual(
+            automation_v2.extract_remaining_minutes_from_text(
+                "bot free\nTime remaining: 1d 23h\nFree plan"
+            ),
+            2820,
+        )
     def test_online_and_offline_states(self):
         self.assertEqual(
             automation_v2.extract_server_state_from_text("bot free\nOnline\nStart\nRestart\nStop"),
