@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1 - 2026-10-12
+
+### Fixed
+- Waits for the ACLClouds control panel to finish loading before deciding that Start is missing
+- Checks every visible status/button match instead of stopping at a hidden responsive duplicate
+- Treats disabled Start with enabled Stop or Restart as Online
+- Uses a desktop browser viewport and re-verifies disabled Start states before reporting Starting
+
 ## 2.0.0 - 2026-10-12
 
 ### Changed

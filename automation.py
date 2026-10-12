@@ -6,9 +6,12 @@ from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://aclclouds.com"
 PROJECTS_URL = f"{BASE_URL}/dashboard/projects"
-ONLINE_TEXTS = ("Online", "ONLINE", "En ligne", "在线")
+ONLINE_TEXTS = ("Online", "ONLINE", "Running", "RUNNING", "En ligne", "在线", "运行中")
 OFFLINE_TEXTS = ("Offline", "OFFLINE", "Stopped", "STOPPED", "Hors ligne", "离线", "已停止")
 START_TEXTS = ("Start", "Démarrer", "启动", "开始")
+STOP_TEXTS = ("Stop", "Arrêter", "停止")
+RESTART_TEXTS = ("Restart", "Redémarrer", "重启")
+STARTING_TEXTS = ("Starting", "Démarrage", "启动中")
 DETAIL_TEXTS = ("View service details", "Service details", "Voir les détails", "查看服务详情")
 
 
@@ -52,7 +55,7 @@ def extract_server_state_from_text(body: str) -> str:
         return "online"
     if any(item.lower() in lines for item in OFFLINE_TEXTS):
         return "offline"
-    if any(item in lines for item in ("starting", "démarrage", "启动中")):
+    if any(item.lower() in lines for item in STARTING_TEXTS):
         return "starting"
     return "unknown"
 
@@ -86,48 +89,115 @@ def page_is_blocked(page) -> bool:
     return any(marker in title or marker in body for marker in markers)
 
 
+def first_visible_locator(locator, timeout_ms=1000):
+    try:
+        count = min(locator.count(), 30)
+    except Exception:
+        return None
+    if count == 0:
+        return None
+
+    per_match = max(100, timeout_ms // count)
+    for index in range(count):
+        candidate = locator.nth(index)
+        try:
+            if candidate.is_visible(timeout=per_match):
+                return candidate
+        except Exception:
+            continue
+    return None
+
+
 def first_visible_text(page, texts, timeout_ms=1800):
     per_item = max(250, timeout_ms // max(1, len(texts)))
     for text in texts:
         try:
-            locator = page.get_by_text(text, exact=True).first
-            if locator.is_visible(timeout=per_item):
-                return locator
+            candidate = first_visible_locator(
+                page.get_by_text(text, exact=True), timeout_ms=per_item
+            )
+            if candidate:
+                return candidate
         except Exception:
             pass
     return None
 
 
-def read_server_state(page) -> str:
-    for text in ONLINE_TEXTS:
+def find_button(page, texts, timeout_ms=1200):
+    per_item = max(200, timeout_ms // max(1, len(texts)))
+    for text in texts:
         try:
-            if page.get_by_text(text, exact=True).first.is_visible(timeout=250):
-                return "online"
+            candidate = first_visible_locator(
+                page.get_by_role(
+                    "button", name=re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
+                ),
+                timeout_ms=per_item,
+            )
+            if candidate:
+                return candidate
         except Exception:
             pass
-    for text in OFFLINE_TEXTS:
+    return None
+
+
+def locator_is_enabled(locator) -> bool:
+    if not locator:
+        return False
+    try:
+        return locator.is_enabled()
+    except Exception:
+        return False
+
+
+def read_server_state(page) -> str:
+    if first_visible_text(page, ONLINE_TEXTS, timeout_ms=500):
+        return "online"
+    if first_visible_text(page, OFFLINE_TEXTS, timeout_ms=500):
+        return "offline"
+    if first_visible_text(page, STARTING_TEXTS, timeout_ms=400):
+        return "starting"
+
+    try:
+        body_state = extract_server_state_from_text(
+            page.locator("body").inner_text(timeout=1200)
+        )
+        if body_state != "unknown":
+            return body_state
+    except Exception:
+        pass
+
+    start = find_button(page, START_TEXTS, timeout_ms=500)
+    stop = find_button(page, STOP_TEXTS, timeout_ms=400)
+    restart = find_button(page, RESTART_TEXTS, timeout_ms=400)
+    if start:
         try:
-            if page.get_by_text(text, exact=True).first.is_visible(timeout=250):
+            if start.is_enabled():
                 return "offline"
         except Exception:
             pass
-    try:
-        return extract_server_state_from_text(page.locator("body").inner_text(timeout=1800))
-    except Exception:
-        return "unknown"
+        # ACLClouds disables Start while the service is Online. Stop or Restart
+        # remaining enabled is a reliable fallback when the status badge is
+        # rendered without accessible text.
+        if locator_is_enabled(stop) or locator_is_enabled(restart):
+            return "online"
+        return "starting"
+    return "unknown"
 
 
-def find_start_button(page):
-    for text in START_TEXTS:
-        try:
-            button = page.get_by_role(
-                "button", name=re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
-            ).first
-            if button.is_visible(timeout=350):
-                return button
-        except Exception:
-            pass
-    return first_visible_text(page, START_TEXTS, timeout_ms=1200)
+def find_start_button(page, timeout_ms=1200):
+    return find_button(page, START_TEXTS, timeout_ms=timeout_ms) or first_visible_text(
+        page, START_TEXTS, timeout_ms=timeout_ms
+    )
+
+
+def wait_for_control_panel(page, timeout_seconds=25):
+    attempts = max(1, timeout_seconds * 2)
+    for _ in range(attempts):
+        state = read_server_state(page)
+        start = find_start_button(page, timeout_ms=300)
+        if state == "online" or start:
+            return state, start
+        page.wait_for_timeout(500)
+    return read_server_state(page), find_start_button(page, timeout_ms=800)
 
 
 def expand_first_service(page) -> bool:
@@ -220,12 +290,20 @@ def discover_server_url(page) -> Optional[str]:
     return None
 
 
+def settle_page(page):
+    try:
+        page.wait_for_load_state("networkidle", timeout=8000)
+    except Exception:
+        pass
+    page.wait_for_timeout(1500)
+
+
 def open_server(page, configured_server_url: Optional[str]) -> Optional[str]:
     server_url = validate_server_url(configured_server_url or "")
     if server_url:
         try:
             page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(1000)
+            settle_page(page)
             if not page_is_login(page) and not page_is_blocked(page):
                 return page.url or server_url
         except Exception:
@@ -236,7 +314,7 @@ def open_server(page, configured_server_url: Optional[str]) -> Optional[str]:
         return None
     if page.url != server_url:
         page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(1000)
+        settle_page(page)
     return page.url or server_url
 
 
@@ -249,7 +327,7 @@ def wait_until_online(page, server_url: str, timeout_seconds: int = 120) -> bool
         if attempt and attempt % 3 == 0:
             try:
                 page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(700)
+                settle_page(page)
             except Exception:
                 pass
     return read_server_state(page) == "online"
@@ -262,7 +340,9 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(locale="en-US")
+        context = browser.new_context(
+            locale="en-US", viewport={"width": 1600, "height": 1000}
+        )
         try:
             context.add_cookies(cookies)
         except Exception as exc:
@@ -291,7 +371,7 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     "No server details page was found. Set the Bot control-panel URL in Settings.",
                 )
 
-            state = read_server_state(page)
+            state, start = wait_for_control_panel(page)
             if state == "online":
                 return CheckResult(
                     True,
@@ -301,22 +381,41 @@ def run_check(cookie_header: str, configured_server_url: Optional[str]) -> Check
                     online_verified=True,
                 )
 
-            start = find_start_button(page)
             if not start:
                 return CheckResult(
                     False,
                     "status_unknown",
-                    "Bot is not Online, but the Start button could not be found.",
+                    "The control panel did not expose a visible Start button within 25 seconds.",
                     server_url=server_url,
                 )
+
             try:
-                if not start.is_enabled():
+                start_enabled = start.is_enabled()
+            except Exception as exc:
+                return CheckResult(
+                    False,
+                    "status_unknown",
+                    f"Start button state could not be read: {exc}",
+                    server_url=server_url,
+                )
+
+            if not start_enabled:
+                if wait_until_online(page, server_url, timeout_seconds=45):
                     return CheckResult(
                         True,
-                        "starting",
-                        "Start is disabled; the bot may already be starting.",
+                        "online",
+                        "Bot is Online (verified from the control-button state).",
                         server_url=server_url,
+                        online_verified=True,
                     )
+                return CheckResult(
+                    True,
+                    "starting",
+                    "Start is disabled and Online is not confirmed yet; it will be checked again.",
+                    server_url=server_url,
+                )
+
+            try:
                 start.click(timeout=5000)
             except Exception as exc:
                 return CheckResult(
