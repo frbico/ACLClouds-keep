@@ -5,6 +5,36 @@ REPO_TARBALL="https://github.com/frbico/ACLClouds-keep/archive/refs/heads/main.t
 APP_DIR="/opt/aclclouds-keep"
 GENERATED_PASSWORD=""
 
+usage() {
+  cat <<'EOF'
+ACLClouds Online Keeper installer
+
+Usage:
+  # Install or update as root:
+  curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
+
+  # Local file as root:
+  bash install.sh
+
+Options:
+  -h, --help           Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Please run this installer as root." >&2
   exit 1

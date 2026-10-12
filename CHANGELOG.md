@@ -7,6 +7,7 @@
 - Checks every visible status/button match instead of stopping at a hidden responsive duplicate
 - Treats disabled Start with enabled Stop or Restart as Online
 - Uses a desktop browser viewport and re-verifies disabled Start states before reporting Starting
+- Allows install.sh --help to run without root so CI validation succeeds
 
 ## 2.0.0 - 2026-10-12
 
