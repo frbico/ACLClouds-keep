@@ -1,43 +1,65 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from automation import (
-    extract_remaining_minutes_from_text,
-    parse_cookie_header,
-    parse_duration_minutes,
-)
+import automation as automation_v2
+import storage as storage_v2
 
 
-class AutomationParsingTests(unittest.TestCase):
+class AutomationTests(unittest.TestCase):
     def test_cookie_header_parsing(self):
-        cookies = parse_cookie_header("session=abc123; locale=en; empty=")
-        self.assertEqual([c["name"] for c in cookies], ["session", "locale", "empty"])
-        self.assertEqual(cookies[0]["value"], "abc123")
+        cookies = automation_v2.parse_cookie_header("session=abc; locale=en")
+        self.assertEqual([item["name"] for item in cookies], ["session", "locale"])
 
-    def test_current_aclclouds_expiry_format(self):
-        body = "My bot\ngolang generic\nRAM 315 MB\nExpires in 2j 3h\nRenewal will be available 2 days before expiration"
-        self.assertEqual(extract_remaining_minutes_from_text(body), 2 * 1440 + 3 * 60)
-
-    def test_legacy_english_duration(self):
-        self.assertEqual(parse_duration_minutes("1d 2h 15min"), 1575)
+    def test_server_url_validation(self):
         self.assertEqual(
-            extract_remaining_minutes_from_text("Time remaining: 1d 2h 15min"),
-            1575,
+            automation_v2.validate_server_url("https://aclclouds.com/server/d7ff16ce/"),
+            "https://aclclouds.com/server/d7ff16ce",
+        )
+        self.assertIsNone(automation_v2.validate_server_url("https://example.com/server/d7ff16ce"))
+        self.assertIsNone(automation_v2.validate_server_url("https://aclclouds.com/dashboard/projects"))
+
+    def test_online_and_offline_states(self):
+        self.assertEqual(
+            automation_v2.extract_server_state_from_text("bot free\nOnline\nStart\nRestart\nStop"),
+            "online",
+        )
+        self.assertEqual(
+            automation_v2.extract_server_state_from_text("bot free\nOffline\nStart"),
+            "offline",
+        )
+        self.assertEqual(
+            automation_v2.extract_server_state_from_text("Applications\nStartup\nSettings"),
+            "unknown",
         )
 
-    def test_french_and_chinese_duration(self):
-        self.assertEqual(
-            extract_remaining_minutes_from_text("Expire dans 1j 4h"),
-            1680,
-        )
-        chinese = "\u5269\u4f59\u65f6\u95f4\uff1a2\u5929 6\u5c0f\u65f6 30\u5206\u949f"
-        self.assertEqual(
-            extract_remaining_minutes_from_text(chinese),
-            3270,
-        )
 
-    def test_renewal_banner_is_not_mistaken_for_expiry(self):
-        body = "Renewal will be available 2 days before expiration"
-        self.assertIsNone(extract_remaining_minutes_from_text(body))
+class StorageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.original = storage_v2.DB_PATH
+        storage_v2.DB_PATH = Path(self.temp.name) / "keeper.db"
+        storage_v2.init_db()
+
+    def tearDown(self):
+        storage_v2.DB_PATH = self.original
+        self.temp.cleanup()
+
+    def test_account_keeps_bot_url_and_start_timestamp(self):
+        account_id = storage_v2.create_account(
+            "Bot 1",
+            "encrypted",
+            project_url="https://aclclouds.com/server/d7ff16ce",
+        )
+        storage_v2.update_account(
+            account_id,
+            last_status="started",
+            last_renew_at="2026-10-12T00:00:00+00:00",
+        )
+        account = storage_v2.get_account(account_id)
+        self.assertEqual(account["project_url"], "https://aclclouds.com/server/d7ff16ce")
+        self.assertEqual(account["last_status"], "started")
+        self.assertEqual(account["last_renew_at"], "2026-10-12T00:00:00+00:00")
 
 
 if __name__ == "__main__":

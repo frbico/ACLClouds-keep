@@ -6,29 +6,10 @@ from playwright.sync_api import sync_playwright
 
 BASE_URL = "https://aclclouds.com"
 PROJECTS_URL = f"{BASE_URL}/dashboard/projects"
-
-RENEW_TEXTS = [
-    "Renew now",
-    "Renew",
-    "Renouveler maintenant",
-    "Renouveler",
-    "立即续期",
-    "续期",
-]
-CONFIRM_TEXTS = ["Confirm", "Confirmer", "确认"]
-START_TEXTS = ["Start", "Démarrer", "开机"]
-OFFLINE_TEXTS = ["OFFLINE", "Offline", "Hors ligne", "离线"]
-MANAGE_TEXTS = ["Manage", "Gérer", "管理"]
-
-EXPIRY_MARKERS = (
-    r"expires?\s+in",
-    r"time\s+remaining",
-    r"expire\s+dans",
-    r"expiration\s+dans",
-    r"temps\s+restant",
-    r"剩余时间",
-    r"到期剩余",
-)
+ONLINE_TEXTS = ("Online", "ONLINE", "En ligne", "在线")
+OFFLINE_TEXTS = ("Offline", "OFFLINE", "Stopped", "STOPPED", "Hors ligne", "离线", "已停止")
+START_TEXTS = ("Start", "Démarrer", "启动", "开始")
+DETAIL_TEXTS = ("View service details", "Service details", "Voir les détails", "查看服务详情")
 
 
 @dataclass
@@ -36,16 +17,14 @@ class CheckResult:
     ok: bool
     status: str
     message: str
-    remaining_minutes: Optional[int] = None
-    project_url: Optional[str] = None
-    renewed: bool = False
-    renewal_verified: bool = False
-    started: bool = False
+    server_url: Optional[str] = None
+    start_clicked: bool = False
+    online_verified: bool = False
 
 
 def parse_cookie_header(raw: str):
     cookies = []
-    for part in raw.strip().split(";"):
+    for part in (raw or "").strip().split(";"):
         part = part.strip()
         if not part or "=" not in part:
             continue
@@ -57,53 +36,25 @@ def parse_cookie_header(raw: str):
     return cookies
 
 
-def parse_duration_minutes(text: str) -> Optional[int]:
-    """Parse ACLClouds-style durations such as ``2d 3h`` or ``2j 3h``."""
-    if not text:
+def validate_server_url(raw: str) -> Optional[str]:
+    value = (raw or "").strip().rstrip("/")
+    if not value:
         return None
-
-    normalized = text.replace("\xa0", " ").strip().lower()
-    total = 0
-    found = False
-
-    unit_patterns = (
-        (1440, r"(\d+)\s*(?:d|day|days|j|jour|jours)\b"),
-        (60, r"(\d+)\s*(?:h|hr|hrs|hour|hours|heure|heures)\b"),
-        (1, r"(\d+)\s*(?:m|min|mins|minute|minutes)\b"),
-    )
-    for multiplier, pattern in unit_patterns:
-        match = re.search(pattern, normalized, re.IGNORECASE)
-        if match:
-            total += int(match.group(1)) * multiplier
-            found = True
-
-    zh_days = re.search(r"(\d+)\s*天", normalized)
-    zh_hours = re.search(r"(\d+)\s*小时", normalized)
-    zh_minutes = re.search(r"(\d+)\s*分钟", normalized)
-    for multiplier, match in ((1440, zh_days), (60, zh_hours), (1, zh_minutes)):
-        if match:
-            total += int(match.group(1)) * multiplier
-            found = True
-
-    return total if found else None
-
-
-def extract_remaining_minutes_from_text(body: str) -> Optional[int]:
-    if not body:
-        return None
-
-    text = body.replace("\xa0", " ")
-    marker_pattern = "|".join(EXPIRY_MARKERS)
-    matches = re.finditer(
-        rf"(?:{marker_pattern})\s*:?\s*([^\n\r]{{1,90}})",
-        text,
-        re.IGNORECASE,
-    )
-    for match in matches:
-        parsed = parse_duration_minutes(match.group(1))
-        if parsed is not None:
-            return parsed
+    if re.fullmatch(r"https://aclclouds\.com/server/[A-Za-z0-9_-]+", value):
+        return value
     return None
+
+
+def extract_server_state_from_text(body: str) -> str:
+    text = (body or "").replace("\xa0", " ")
+    lines = {line.strip().lower() for line in text.splitlines() if line.strip()}
+    if any(item.lower() in lines for item in ONLINE_TEXTS):
+        return "online"
+    if any(item.lower() in lines for item in OFFLINE_TEXTS):
+        return "offline"
+    if any(item in lines for item in ("starting", "démarrage", "启动中")):
+        return "starting"
+    return "unknown"
 
 
 def page_is_login(page) -> bool:
@@ -115,7 +66,7 @@ def page_is_login(page) -> bool:
     except Exception:
         return False
     markers = ("sign in", "log in", "se connecter", "connexion")
-    return any(marker in body for marker in markers) and "/dashboard" not in page.url
+    return any(marker in body for marker in markers) and "/server/" not in url
 
 
 def page_is_blocked(page) -> bool:
@@ -135,14 +86,6 @@ def page_is_blocked(page) -> bool:
     return any(marker in title or marker in body for marker in markers)
 
 
-def extract_remaining_minutes(page) -> Optional[int]:
-    try:
-        body = page.locator("body").inner_text(timeout=3500)
-    except Exception:
-        return None
-    return extract_remaining_minutes_from_text(body)
-
-
 def first_visible_text(page, texts, timeout_ms=1800):
     per_item = max(250, timeout_ms // max(1, len(texts)))
     for text in texts:
@@ -155,204 +98,164 @@ def first_visible_text(page, texts, timeout_ms=1800):
     return None
 
 
-def expand_first_service(page) -> bool:
-    """Expand the first service card on the current My Projects layout.
+def read_server_state(page) -> str:
+    for text in ONLINE_TEXTS:
+        try:
+            if page.get_by_text(text, exact=True).first.is_visible(timeout=250):
+                return "online"
+        except Exception:
+            pass
+    for text in OFFLINE_TEXTS:
+        try:
+            if page.get_by_text(text, exact=True).first.is_visible(timeout=250):
+                return "offline"
+        except Exception:
+            pass
+    try:
+        return extract_server_state_from_text(page.locator("body").inner_text(timeout=1800))
+    except Exception:
+        return "unknown"
 
-    ACLClouds currently exposes the expiry only after the small arrow next to the
-    service type (for example ``golang generic``) is clicked. Prefer semantic
-    ``aria-expanded`` controls, then fall back to the compact button adjacent to
-    a ``* generic`` label. No destructive button is ever selected.
-    """
-    if extract_remaining_minutes(page) is not None:
+
+def find_start_button(page):
+    for text in START_TEXTS:
+        try:
+            button = page.get_by_role(
+                "button", name=re.compile(rf"^\s*{re.escape(text)}\s*$", re.I)
+            ).first
+            if button.is_visible(timeout=350):
+                return button
+        except Exception:
+            pass
+    return first_visible_text(page, START_TEXTS, timeout_ms=1200)
+
+
+def expand_first_service(page) -> bool:
+    if page.locator("a[href*='/server/']").count():
         return True
 
-    selectors = (
+    blocked = (
+        "renew",
+        "cancel",
+        "delete",
+        "stop",
+        "restart",
+        "start",
+        "support",
+        "invoice",
+        "csv",
+        "filter",
+    )
+    for selector in (
         "main button[aria-expanded='false']",
         "main [role='button'][aria-expanded='false']",
-        "button[aria-expanded='false']",
-        "[role='button'][aria-expanded='false']",
-    )
-    for selector in selectors:
+        "main button:has(svg)",
+    ):
         try:
             candidates = page.locator(selector)
-            count = min(candidates.count(), 20)
-            for i in range(count):
-                candidate = candidates.nth(i)
+            for index in range(min(candidates.count(), 40)):
+                candidate = candidates.nth(index)
                 try:
-                    label = (candidate.inner_text(timeout=300) or "").strip().lower()
-                except Exception:
-                    label = ""
-                if label in {"manage", "delete", "gérer", "supprimer", "管理", "删除"}:
-                    continue
-                try:
-                    if candidate.is_visible(timeout=300) and candidate.is_enabled():
-                        candidate.click(timeout=1500)
-                        page.wait_for_timeout(650)
-                        if extract_remaining_minutes(page) is not None:
+                    text = (candidate.inner_text(timeout=250) or "").strip().lower()
+                    label = " ".join(
+                        filter(
+                            None,
+                            (
+                                candidate.get_attribute("aria-label"),
+                                candidate.get_attribute("title"),
+                            ),
+                        )
+                    ).strip().lower()
+                    combined = f"{text} {label}".strip()
+                    if any(word in combined for word in blocked):
+                        continue
+                    if (
+                        selector.endswith(":has(svg)")
+                        and text
+                        and candidate.get_attribute("aria-expanded") != "false"
+                    ):
+                        continue
+                    if candidate.is_visible(timeout=250) and candidate.is_enabled():
+                        candidate.click(timeout=1600)
+                        page.wait_for_timeout(500)
+                        if (
+                            page.locator("a[href*='/server/']").count()
+                            or first_visible_text(page, DETAIL_TEXTS, 600)
+                        ):
                             return True
                 except Exception:
                     continue
         except Exception:
             continue
-
-    try:
-        clicked = page.evaluate(
-            r"""
-            () => {
-              const blocked = new Set(['manage', 'delete', 'gérer', 'supprimer', '管理', '删除']);
-              const nodes = [...document.querySelectorAll('main *, body *')];
-              const labels = nodes.filter((el) => {
-                const text = (el.textContent || '').trim();
-                return /\bgeneric\s*$/i.test(text) && text.length < 90;
-              });
-
-              for (const label of labels) {
-                const containers = [label.parentElement, label.parentElement?.parentElement].filter(Boolean);
-                for (const container of containers) {
-                  const controls = [...container.querySelectorAll('button,[role="button"]')];
-                  const target = controls.find((control) => {
-                    const text = (control.textContent || '').trim().toLowerCase();
-                    return !blocked.has(text) && !control.disabled;
-                  });
-                  if (target) {
-                    target.click();
-                    return true;
-                  }
-                }
-              }
-              return false;
-            }
-            """
-        )
-        if clicked:
-            page.wait_for_timeout(700)
-            if extract_remaining_minutes(page) is not None:
-                return True
-    except Exception:
-        pass
-
-    return extract_remaining_minutes(page) is not None
+    return first_visible_text(page, DETAIL_TEXTS, 600) is not None
 
 
-def discover_project_url(page) -> Optional[str]:
+def discover_server_url(page) -> Optional[str]:
     page.goto(PROJECTS_URL, wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(1200)
     if page_is_login(page) or page_is_blocked(page):
         return None
 
-    if expand_first_service(page):
-        return page.url or PROJECTS_URL
-
-    # Backward compatibility with the older layout that linked to a dedicated
-    # project/server page.
-    for link in page.locator("a").all():
+    for _ in range(2):
         try:
-            href = link.get_attribute("href") or ""
-        except Exception:
-            continue
-        if href.startswith("/dashboard/projects/"):
-            return f"{BASE_URL}{href}"
-        if "/server/" in href:
-            return href if href.startswith("http") else f"{BASE_URL}{href}"
-
-    # Some layouts expose a Manage button instead of an anchor. Clicking Manage
-    # is non-destructive and may navigate to a dedicated details page.
-    manage = first_visible_text(page, MANAGE_TEXTS, timeout_ms=1200)
-    if manage:
-        try:
-            manage.click(timeout=3000)
-            page.wait_for_timeout(1000)
-            if not page_is_login(page) and not page_is_blocked(page):
-                if expand_first_service(page) or extract_remaining_minutes(page) is not None:
-                    return page.url or PROJECTS_URL
+            links = page.locator("a[href*='/server/']")
+            for index in range(min(links.count(), 20)):
+                href = links.nth(index).get_attribute("href") or ""
+                if "/server/" in href:
+                    return href if href.startswith("http") else f"{BASE_URL}{href}"
         except Exception:
             pass
+        if not expand_first_service(page):
+            break
+
+    details = first_visible_text(page, DETAIL_TEXTS, timeout_ms=1600)
+    if details:
+        try:
+            details.click(timeout=4000)
+            page.wait_for_url(re.compile(r".*/server/[^/?#]+"), timeout=12000)
+            return page.url
+        except Exception:
+            if "/server/" in (page.url or ""):
+                return page.url
     return None
 
 
-def open_project(page, cached_project_url: Optional[str]) -> Optional[str]:
-    if cached_project_url:
+def open_server(page, configured_server_url: Optional[str]) -> Optional[str]:
+    server_url = validate_server_url(configured_server_url or "")
+    if server_url:
         try:
-            page.goto(cached_project_url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(1200)
+            page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(1000)
             if not page_is_login(page) and not page_is_blocked(page):
-                expand_first_service(page)
-                if extract_remaining_minutes(page) is not None:
-                    return page.url or cached_project_url
+                return page.url or server_url
         except Exception:
             pass
 
-    project_url = discover_project_url(page)
-    if not project_url:
+    server_url = discover_server_url(page)
+    if not server_url:
         return None
-
-    if page.url != project_url:
-        page.goto(project_url, wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(1300)
-    expand_first_service(page)
-    return page.url or project_url
+    if page.url != server_url:
+        page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(1000)
+    return page.url or server_url
 
 
-def try_renew(page, previous_remaining: Optional[int]):
-    button = first_visible_text(page, RENEW_TEXTS, timeout_ms=2400)
-    if not button:
-        return False, False, previous_remaining, "Renew button is not available yet."
-    try:
-        if not button.is_enabled():
-            return False, False, previous_remaining, "Renew button is visible but disabled."
-    except Exception:
-        pass
-
-    button.click(timeout=5000)
-    page.wait_for_timeout(900)
-
-    confirm = first_visible_text(page, CONFIRM_TEXTS, timeout_ms=2000)
-    if confirm:
-        try:
-            if confirm.is_enabled():
-                confirm.click(timeout=5000)
-                page.wait_for_timeout(1400)
-        except Exception:
-            pass
-
-    page.reload(wait_until="domcontentloaded", timeout=45000)
-    page.wait_for_timeout(1500)
-    expand_first_service(page)
-    new_remaining = extract_remaining_minutes(page)
-
-    verified = False
-    if previous_remaining is not None and new_remaining is not None:
-        verified = new_remaining >= previous_remaining + 12 * 60
-
-    if verified:
-        return True, True, new_remaining, "Renewal completed and remaining time increased."
-    return True, False, new_remaining, "Renew was clicked, but the new expiry could not be verified."
+def wait_until_online(page, server_url: str, timeout_seconds: int = 120) -> bool:
+    attempts = max(1, timeout_seconds // 5)
+    for attempt in range(attempts):
+        if read_server_state(page) == "online":
+            return True
+        page.wait_for_timeout(5000)
+        if attempt and attempt % 3 == 0:
+            try:
+                page.goto(server_url, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(700)
+            except Exception:
+                pass
+    return read_server_state(page) == "online"
 
 
-def maybe_start(page) -> bool:
-    offline = first_visible_text(page, OFFLINE_TEXTS, timeout_ms=1200)
-    if not offline:
-        return False
-    start = first_visible_text(page, START_TEXTS, timeout_ms=1500)
-    if not start:
-        return False
-    try:
-        if not start.is_enabled():
-            return False
-        start.click(timeout=5000)
-        page.wait_for_timeout(1200)
-        return True
-    except Exception:
-        return False
-
-
-def run_check(
-    cookie_header: str,
-    cached_project_url: Optional[str],
-    action: str,
-    target_remaining_hours: int,
-    auto_start: bool,
-) -> CheckResult:
+def run_check(cookie_header: str, configured_server_url: Optional[str]) -> CheckResult:
     cookies = parse_cookie_header(cookie_header)
     if not cookies:
         return CheckResult(False, "cookie_invalid", "Cookie is empty or could not be parsed.")
@@ -368,59 +271,76 @@ def run_check(
 
         page = context.new_page()
         try:
-            project_url = open_project(page, cached_project_url)
-
+            server_url = open_server(page, configured_server_url)
             if page_is_blocked(page):
                 return CheckResult(
                     False,
                     "blocked",
-                    "ACLClouds displayed an anti-bot or human-verification page. Automatic checks are cooling down.",
+                    "ACLClouds displayed an anti-bot or human-verification page.",
                 )
             if page_is_login(page):
                 return CheckResult(
                     False,
                     "cookie_expired",
-                    "The ACLClouds session appears expired. Update this account's Cookie in Settings.",
+                    "The ACLClouds session has expired. Update this account's Cookie.",
                 )
-            if not project_url:
+            if not server_url:
                 return CheckResult(
                     False,
-                    "project_not_found",
-                    "No readable ACLClouds service could be found under My services.",
+                    "server_not_found",
+                    "No server details page was found. Set the Bot control-panel URL in Settings.",
                 )
 
-            remaining = extract_remaining_minutes(page)
-            if remaining is None:
+            state = read_server_state(page)
+            if state == "online":
+                return CheckResult(
+                    True,
+                    "online",
+                    "Bot is Online.",
+                    server_url=server_url,
+                    online_verified=True,
+                )
+
+            start = find_start_button(page)
+            if not start:
                 return CheckResult(
                     False,
-                    "parse_error",
-                    "Expiry could not be read. The project card may not have expanded or ACLClouds may have changed the page layout.",
-                    project_url=project_url,
+                    "status_unknown",
+                    "Bot is not Online, but the Start button could not be found.",
+                    server_url=server_url,
+                )
+            try:
+                if not start.is_enabled():
+                    return CheckResult(
+                        True,
+                        "starting",
+                        "Start is disabled; the bot may already be starting.",
+                        server_url=server_url,
+                    )
+                start.click(timeout=5000)
+            except Exception as exc:
+                return CheckResult(
+                    False,
+                    "start_failed",
+                    f"Start could not be clicked: {exc}",
+                    server_url=server_url,
                 )
 
-            renewed = False
-            verified = False
-            message = "Status read successfully."
-
-            should_renew = action == "renew" or (
-                action == "auto" and remaining <= max(1, target_remaining_hours) * 60
-            )
-
-            if should_renew:
-                renewed, verified, new_remaining, message = try_renew(page, remaining)
-                if new_remaining is not None:
-                    remaining = new_remaining
-
-            started = maybe_start(page) if auto_start else False
+            if wait_until_online(page, server_url):
+                return CheckResult(
+                    True,
+                    "started",
+                    "Start was clicked and Online status was verified.",
+                    server_url=server_url,
+                    start_clicked=True,
+                    online_verified=True,
+                )
             return CheckResult(
-                True,
-                "ok",
-                message,
-                remaining_minutes=remaining,
-                project_url=project_url,
-                renewed=renewed,
-                renewal_verified=verified,
-                started=started,
+                False,
+                "start_unverified",
+                "Start was clicked, but Online was not confirmed within 120 seconds.",
+                server_url=server_url,
+                start_clicked=True,
             )
         finally:
             context.close()

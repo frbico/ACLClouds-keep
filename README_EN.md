@@ -1,27 +1,13 @@
-# ACLClouds-Keep
+# ACLClouds Online Keeper
 
-Self-hosted, low-frequency ACLClouds renewal helper with a Web UI.
+A self-hosted watchdog for ACLClouds bots. It does not renew services. After ACLClouds renews a service—or whenever a bot stops—the watchdog opens the server control panel, clicks **Start**, and waits until **Online** is visible.
 
-## Root install
+Each account has an encrypted Cookie and an optional unique server URL such as `https://aclclouds.com/server/d7ff16ce`. When the URL is empty, the app attempts to discover it from the account's services page.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
-```
+Enabled accounts are kept online even after a manual Stop. Pause an account in Settings before intentionally stopping its bot.
 
-The installer prints the administrator username and generated password. The default username is `admin`; credentials can later be changed in **Settings → Administrator account**.
-
-## Root update
+## Install or update
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash
 ```
-
-Updating preserves configuration, Cookie data, the local database, administrator credentials, and logs.
-
-## Root uninstall
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/uninstall.sh | bash
-```
-
-Uninstalling permanently removes the container, project files, `.env`, Cookie data, and the local database.

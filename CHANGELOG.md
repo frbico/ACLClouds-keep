@@ -1,33 +1,16 @@
 # Changelog
 
-## 1.1.0 - 2026-09-21
-
-### Added
-- Administrator username + password login
-- Administrator credential management in Settings
-- In-app GitHub version check
-- Website favicon
-- Version information in the health endpoint
+## 2.0.0 - 2026-10-12
 
 ### Changed
-- Enlarged the three manual-action buttons
-- Rebalanced Chinese typography, heading sizes, spacing, and form text
-- Simplified README to root install / update / uninstall commands
-- Installer now bootstraps the default administrator username as `admin`
+- Replaced all expiry and renewal automation with an Online-only watchdog
+- Added an optional unique ACLClouds server control-panel URL per account
+- Automatically discovers the server URL when the field is empty
+- Clicks Start whenever an enabled bot is not Online and verifies Online for up to 120 seconds
+- Clarified that enabled accounts will also restart after a user manually stops them
+- Preserved compatibility with existing encrypted Cookies and account database fields
 
-### Removed
-- Deployment-specific documentation
-
-## 1.0.0 - 2026-09-21
+## 1.2.0 - 2026-09-24
 
 ### Added
-- Public one-line Docker installer
-- Self-hosted Web management UI
-- Adaptive low-frequency renewal scheduling
-- Encrypted Cookie storage
-- Docker health checks and local event logs
-- CI-only GitHub Actions
-
-### Changed
-- Replaced the old GitHub Hosted Runner renewal model with self-hosting
-- Renewal checks are based on remaining time instead of a fixed daily schedule
+- Multi-account ACLClouds support

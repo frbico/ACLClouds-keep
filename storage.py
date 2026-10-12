@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,13 +24,21 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@contextmanager
 def connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -74,21 +83,18 @@ def get_value(key: str, default: str = "") -> str:
 
 
 def set_value(key: str, value) -> None:
-    if value is None:
-        value = ""
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO kv(key, value) VALUES(?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
-            (key, str(value)),
+            (key, "" if value is None else str(value)),
         )
 
 
 def get_bool(key: str, default: bool = False) -> bool:
-    raw = get_value(key, "1" if default else "0").lower()
-    return raw in {"1", "true", "yes", "on"}
+    return get_value(key, "1" if default else "0").lower() in {"1", "true", "yes", "on"}
 
 
 def set_bool(key: str, value: bool) -> None:
@@ -111,12 +117,11 @@ def count_accounts() -> int:
 
 def list_accounts(include_disabled: bool = True) -> list[dict[str, Any]]:
     sql = "SELECT * FROM accounts"
-    args: tuple[Any, ...] = ()
     if not include_disabled:
         sql += " WHERE enabled = 1"
     sql += " ORDER BY id ASC"
     with connect() as conn:
-        rows = conn.execute(sql, args).fetchall()
+        rows = conn.execute(sql).fetchall()
     return [_account_dict(row) for row in rows]
 
 
@@ -168,26 +173,17 @@ def create_account(
 
 
 def update_account(account_id: int, **fields) -> bool:
-    clean = {k: v for k, v in fields.items() if k in ACCOUNT_FIELDS}
+    clean = {key: value for key, value in fields.items() if key in ACCOUNT_FIELDS}
     if not clean:
         return get_account(account_id) is not None
-
     if "enabled" in clean:
         clean["enabled"] = 1 if bool(clean["enabled"]) else 0
-    for key, value in list(clean.items()):
-        if value is None:
-            clean[key] = ""
-
+    clean = {key: "" if value is None else value for key, value in clean.items()}
     clean["updated_at"] = utc_now_iso()
     assignments = ", ".join(f"{key} = ?" for key in clean)
-    values = [clean[key] for key in clean]
-    values.append(account_id)
-
+    values = [*clean.values(), account_id]
     with connect() as conn:
-        cur = conn.execute(
-            f"UPDATE accounts SET {assignments} WHERE id = ?",
-            values,
-        )
+        cur = conn.execute(f"UPDATE accounts SET {assignments} WHERE id = ?", values)
     return cur.rowcount > 0
 
 
@@ -204,12 +200,7 @@ def add_event(level: str, message: str) -> None:
             (utc_now_iso(), level, message),
         )
         conn.execute(
-            """
-            DELETE FROM events
-            WHERE id NOT IN (
-                SELECT id FROM events ORDER BY id DESC LIMIT 500
-            )
-            """
+            "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 500)"
         )
 
 

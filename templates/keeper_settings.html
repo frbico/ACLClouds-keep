@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-title">
+  <div><span class="eyebrow">PREFERENCES</span><h1>Online 守护设置</h1><p>每个 ACLClouds 账号独立保存 Cookie、Bot URL 与启用状态。</p></div>
+  <a class="button button-outline" href="{{ url_for('index') }}">返回状态</a>
+</section>
+
+<form method="post" class="settings-layout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <section class="panel settings-panel">
+    <div class="panel-heading"><div><span class="eyebrow">AUTOMATION</span><h2>自动守护</h2></div></div>
+    <label class="setting-row">
+      <div class="setting-copy"><span class="setting-icon">▶</span><div><b>确保 Bot 始终 Online</b><p>发现未 Online 且 Start 可用时自动点击，并等待确认 Online。</p></div></div>
+      <span class="toggle"><input type="checkbox" name="auto_enabled" {% if auto_enabled %}checked{% endif %}><span class="toggle-slider"></span></span>
+    </label>
+    <div class="inline-notice">启用后，无论是续期、异常还是手动 Stop 导致停止，程序都会重新 Start。要保持手动停止，请先暂停对应账号。</div>
+  </section>
+
+  <section class="panel settings-panel">
+    <div class="panel-heading"><div><span class="eyebrow">SCHEDULE</span><h2>检查频率</h2></div></div>
+    <div class="form-grid"><div class="field">
+      <label>Online 检查间隔</label>
+      <div class="input-with-suffix"><input type="number" min="1" max="60" name="check_interval_minutes" value="{{ check_interval_minutes }}"><span>分钟</span></div>
+      <small>推荐 5 分钟；启动未确认时会在 5 分钟后重试。</small>
+    </div></div>
+  </section>
+
+  <section class="panel settings-panel">
+    <div class="panel-heading"><div><span class="eyebrow">ADMIN ACCOUNT</span><h2>管理员账号</h2></div></div>
+    <div class="form-grid">
+      <div class="field"><label>管理员账号</label><input type="text" name="admin_username" maxlength="64" value="{{ admin_username }}" required></div>
+      <div class="field"><label>当前管理员密码</label><input type="password" name="current_admin_password" placeholder="仅修改凭据时填写"></div>
+      <div class="field"><label>新管理员密码</label><input type="password" name="new_admin_password" placeholder="至少 8 个字符"></div>
+      <div class="field"><label>确认新密码</label><input type="password" name="confirm_admin_password"></div>
+    </div>
+  </section>
+  <div class="settings-submit"><button class="button button-primary button-large" type="submit">保存全局设置</button></div>
+</form>
+
+<section class="settings-layout accounts-section" id="accounts">
+  <section class="panel settings-panel">
+    <div class="panel-heading"><div><span class="eyebrow">ACLClouds ACCOUNTS</span><h2>账号与 Bot</h2><p class="section-note">URL 推荐填写；留空时会根据 Cookie 从服务列表自动发现。</p></div><span class="state-chip neutral">{{ accounts|length }} 个账号</span></div>
+    {% for account in accounts %}
+    <div class="account-settings-card" id="account-{{ account.id }}">
+      <form method="post" action="{{ url_for('account_update', account_id=account.id) }}" class="account-edit-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="account-card-head"><div><span class="eyebrow">ACCOUNT #{{ account.id }}</span><h3>{{ account.name }}</h3></div>
+          <label class="account-enabled-toggle"><span>启用强制 Online 守护</span><span class="toggle"><input type="checkbox" name="enabled" {% if account.enabled %}checked{% endif %}><span class="toggle-slider"></span></span></label>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label>账号备注名</label><input type="text" name="account_name" maxlength="64" value="{{ account.name }}" required></div>
+          <div class="field"><label>Bot 控制面板 URL</label><input type="url" name="server_url" value="{{ account.project_url }}" placeholder="https://aclclouds.com/server/d7ff16ce"><small>每个 Bot 唯一；留空自动发现。</small></div>
+        </div>
+        <div class="field account-cookie-field"><label>替换 Cookie（可选）</label><textarea name="cookie" rows="4" spellcheck="false" placeholder="留空保持现有 Cookie；更新时粘贴完整 Cookie 请求头"></textarea><small>Cookie 原文不会回显。</small></div>
+        <div class="account-form-actions"><button class="button button-primary" type="submit">保存此账号</button><button class="button button-danger-soft" type="submit" form="delete-account-{{ account.id }}" onclick="return confirm('确定删除此账号？')">删除账号</button></div>
+      </form>
+      <form id="delete-account-{{ account.id }}" method="post" action="{{ url_for('account_delete', account_id=account.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
+    </div>
+    {% else %}<div class="empty-state">还没有账号。</div>{% endfor %}
+  </section>
+
+  <section class="panel settings-panel add-account-panel">
+    <div class="panel-heading"><div><span class="eyebrow">ADD ACCOUNT</span><h2>添加账号</h2></div></div>
+    <form method="post" action="{{ url_for('account_add') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid">
+        <div class="field"><label>账号备注名</label><input type="text" name="account_name" maxlength="64" placeholder="例如：Killy / Bot 2"></div>
+        <div class="field"><label>Bot 控制面板 URL（推荐）</label><input type="url" name="server_url" placeholder="https://aclclouds.com/server/d7ff16ce"><small>留空将自动发现。</small></div>
+      </div>
+      <div class="field add-cookie-field"><label>Cookie</label><textarea name="cookie" rows="5" required spellcheck="false" placeholder="name=value; name2=value2"></textarea></div>
+      <div class="settings-submit"><button class="button button-primary button-large" type="submit">添加并开始守护</button></div>
+    </form>
+  </section>
+</section>
+
+<section class="panel settings-panel update-panel">
+  <div class="update-info"><div><span class="eyebrow">SOFTWARE UPDATE</span><h2>检查更新</h2><p>当前版本 <b>v{{ current_version }}</b>{% if latest_version %} · GitHub 最新 <b>v{{ latest_version }}</b>{% endif %}</p>{% if update_available %}<code class="update-command">curl -fsSL https://raw.githubusercontent.com/frbico/ACLClouds-keep/main/install.sh | bash</code>{% endif %}</div>
+  <form method="post" action="{{ url_for('action_check_update') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-outline" type="submit">检查更新</button></form></div>
+</section>
+{% endblock %}

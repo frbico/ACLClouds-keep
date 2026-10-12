@@ -16,4 +16,4 @@ ENV PYTHONUNBUFFERED=1 PORT=8787
 
 EXPOSE 8787
 
-CMD ["gunicorn", "--workers", "1", "--threads", "4", "--timeout", "120", "--bind", "0.0.0.0:8787", "app:app"]
+CMD ["gunicorn", "--workers", "1", "--threads", "4", "--timeout", "240", "--bind", "0.0.0.0:8787", "app:app"]
